@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+[x-cloak] { display: none !important; }
+
+/*
+ * REQ-3.3: minimal text layer for the PDF viewer, hand-written rather than
+ * importing pdf.js's own web/pdf_viewer.css - that stylesheet assumes the whole
+ * viewer app (toolbar, annotation editor, etc.) and its `--total-scale-factor`
+ * custom-property contract, which we don't use since we only import pdf.js's core
+ * (not its bundled viewer). This covers just what TextLayer needs: invisible,
+ * precisely positioned, selectable spans overlaying the canvas.
+ */
+.pdf-text-layer {
+    position: absolute;
+    inset: 0;
+    overflow: clip;
+    line-height: 1;
+    text-align: initial;
+    transform-origin: 0 0;
+}
+.pdf-text-layer span,
+.pdf-text-layer br {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    cursor: text;
+    transform-origin: 0% 0%;
+}
+.pdf-text-layer.mapping-active { pointer-events: auto; }
+.pdf-text-layer:not(.mapping-active) { pointer-events: none; }
+.pdf-text-layer ::selection { background: rgba(221, 110, 23, 0.35); }

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(taskkill //F //PID 43020)",
+      "Bash(php artisan *)",
+      "Bash(disown)",
+      "Bash(xargs sed -i 's/indigo-/brand-/g')",
+      "Bash(xargs sed -i -e s/bg-gray-800/bg-brand-600/g -e s/hover:bg-gray-700/hover:bg-brand-700/g -e s/focus:bg-gray-700/focus:bg-brand-700/g -e s/active:bg-gray-900/active:bg-brand-800/g)",
+      "Bash(sed -i 's/^APP_NAME=.*/APP_NAME=VODO/' .env)",
+      "Bash(sed -i 's/^APP_NAME=.*/APP_NAME=VODO/' .env.example)",
+      "Bash(grep -oE '\"exception_message\":\"[^\"]*\"|<title>[^<]*Exception[^<]*</title>|class=\"[^\"]*exception[^\"]*\"[^>]*>[^<]{0,200}' /tmp/vodo_demo/resubmit_body.html)"
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+<svg viewBox="0 0 220 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="VODO">
+    <defs>
+        <linearGradient id="vodoOrange" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#F5B942" />
+            <stop offset="100%" stop-color="#EE6C1F" />
+        </linearGradient>
+    </defs>
+
+    <!-- left ring: orange-to-yellow gradient -->
+    <circle cx="70" cy="80" r="58" fill="url(#vodoOrange)" />
+    <circle cx="70" cy="80" r="30" fill="#ffffff" />
+
+    <!-- right ring: brand teal -->
+    <circle cx="150" cy="80" r="58" fill="#127277" />
+    <circle cx="150" cy="80" r="30" fill="#ffffff" />
+
+    <!-- small dot where the two rings meet -->
+    <circle cx="110" cy="80" r="7" fill="#127277" />
+
+    <!-- accent squares -->
+    <rect x="184" y="8" width="16" height="16" fill="#127277" />
+    <rect x="184" y="30" width="11" height="11" fill="#A9A24C" />
+    <rect x="203" y="26" width="11" height="11" fill="#A9A24C" />
+    <rect x="204" y="8" width="9" height="9" fill="#3fb2b4" />
+</svg>

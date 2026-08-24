@@ -1,0 +1,1 @@
+<x-error-page code="500" title="Something went wrong on our end" message="An unexpected error occurred and has been logged. Try again in a moment — if it keeps happening, let your administrator know." />

@@ -1,0 +1,109 @@
+name: promomats-approval-system
+
+# Dev stack only (spec REQ-65) - matches app / nginx / mysql / redis. Values
+# here are set directly as environment vars (not baked into a config:cache),
+# so editing them and running `docker compose up -d` picks up the change on
+# the next request without a rebuild. For production, use a purpose-built
+# image (config:cache'd, opcache.validate_timestamps=0) instead of this file.
+
+x-app-env: &app-env
+  APP_NAME: "${APP_NAME:-VODO}"
+  APP_ENV: local
+  APP_KEY: "${APP_KEY:-}"
+  APP_DEBUG: "true"
+  APP_URL: "${APP_URL:-http://localhost:8080}"
+  LOG_CHANNEL: stack
+  DB_CONNECTION: mysql
+  DB_HOST: mysql
+  DB_PORT: 3306
+  DB_DATABASE: "${DB_DATABASE:-promomats}"
+  DB_USERNAME: "${DB_USERNAME:-promomats}"
+  DB_PASSWORD: "${DB_PASSWORD:-promomats}"
+  QUEUE_CONNECTION: redis
+  CACHE_STORE: redis
+  SESSION_DRIVER: redis
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  FILESYSTEM_DISK: "${FILESYSTEM_DISK:-local}"
+  MAIL_MAILER: "${MAIL_MAILER:-log}"
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - .:/var/www/html
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "true"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:80"
+    volumes:
+      - .:/var/www/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+
+  # Separate container from `app` so a slow/stuck queue job never blocks a web
+  # request (and vice versa) - both run the same image, different commands.
+  queue:
+    build: .
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "--tries=3", "--sleep=3"]
+    volumes:
+      - .:/var/www/html
+    environment: *app-env
+    depends_on:
+      app:
+        condition: service_started
+
+  # Runs `php artisan schedule:run` every minute in-container, standing in for
+  # the cron entry documented in README.md (SLA checks, aging/expiry flags,
+  # archiving, cold storage migration, retrieval processing).
+  scheduler:
+    build: .
+    restart: unless-stopped
+    entrypoint: ["sh", "-c", "while true; do php artisan schedule:run; sleep 60; done"]
+    volumes:
+      - .:/var/www/html
+    environment: *app-env
+    depends_on:
+      app:
+        condition: service_started
+
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: "${DB_DATABASE:-promomats}"
+      MYSQL_USER: "${DB_USERNAME:-promomats}"
+      MYSQL_PASSWORD: "${DB_PASSWORD:-promomats}"
+      MYSQL_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:-root}"
+    ports:
+      - "${FORWARD_DB_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-root}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mysql_data:
+  redis_data:
