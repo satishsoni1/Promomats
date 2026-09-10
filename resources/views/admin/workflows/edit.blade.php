@@ -34,6 +34,22 @@
                 <p class="text-xs text-gray-400 mb-6">Editable — locks automatically the first time a document starts using this version.</p>
             @endif
 
+            <div class="bg-white shadow-sm ring-1 ring-gray-900/5 rounded-lg p-6 mb-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-1">Settings</h3>
+                <p class="text-xs text-gray-400 mb-4">Editable even when the workflow is locked — these don't change any in-flight document's path.</p>
+                <form method="POST" action="{{ route('admin.workflows.settings.update', $workflow) }}">
+                    @csrf
+                    <label class="flex items-start gap-3 text-sm">
+                        <input type="checkbox" name="owner_can_customize_workflow" value="1" @checked($workflow->owner_can_customize_workflow) class="mt-0.5 rounded border-gray-300 text-brand-600">
+                        <span>
+                            <span class="font-medium text-gray-800">Let the document owner pick approvers at upload</span>
+                            <span class="block text-xs text-gray-500 mt-0.5">On the upload form the owner sees each stage and, where a stage has several candidate people, can send it to one named person. They can only narrow the candidates this template already defines — never add anyone new.</span>
+                        </span>
+                    </label>
+                    <button class="mt-3 text-xs px-3 py-1.5 bg-brand-600 text-white rounded-md hover:bg-brand-700">Save settings</button>
+                </form>
+            </div>
+
             <div class="space-y-6 {{ $workflow->isLocked() ? 'opacity-60 pointer-events-none select-none' : '' }}">
                 @foreach ($workflow->stages as $stage)
                     <div class="bg-white shadow-sm ring-1 ring-gray-900/5 rounded-lg p-6">

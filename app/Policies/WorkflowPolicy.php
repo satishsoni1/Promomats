@@ -25,6 +25,12 @@ class WorkflowPolicy
      */
     public function manage(User $user, ?WorkflowTemplate $workflow = null): bool
     {
-        return $user->can('access-admin');
+        if ($user->isGlobalAdmin()) {
+            return true;
+        }
+
+        // A department admin manages only workflows tagged to their department.
+        return $user->isDepartmentAdmin()
+            && ($workflow === null || $user->adminCanReachDepartment($workflow->department));
     }
 }

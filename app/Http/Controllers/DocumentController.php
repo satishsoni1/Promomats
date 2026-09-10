@@ -9,8 +9,11 @@ use App\Models\ContentModule;
 use App\Models\Document;
 use App\Models\DocumentType;
 use App\Models\Project;
+use App\Models\Role;
 use App\Models\User;
+use App\Models\WorkflowStage;
 use App\Models\WorkflowTemplate;
+use App\Models\WorkflowTransition;
 use App\Notifications\DocumentActionNotification;
 use App\Services\AiService;
 use App\Services\Audit\AuditLogger;
@@ -18,7 +21,9 @@ use App\Services\DocumentVersionService;
 use App\Services\Workflow\WorkflowResolver;
 use App\Services\WorkflowEngine;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class DocumentController extends Controller
 {
@@ -57,10 +62,42 @@ class DocumentController extends Controller
 
     public function create()
     {
-        $templates = WorkflowTemplate::where('is_active', true)->get();
+        $templates = WorkflowTemplate::shared()
+            ->where('is_active', true)
+            ->with(['stages.approvers.role', 'stages.approvers.user'])
+            ->get();
         $projects = Project::where('status', 'active')->orderBy('name')->get(['id', 'name', 'target_audience']);
         $brands = Brand::active()->orderBy('name')->get();
         $documentTypes = DocumentType::active()->orderBy('name')->get();
+
+        // For templates whose admin has enabled owner customization: the per-stage
+        // candidate people the upload form lets the owner narrow down to a named
+        // approver. Shaped for the create form's Alpine component - see the
+        // "Approvers for this workflow" section in documents/create.blade.php.
+        $candidateUserIds = $templates->flatMap->stages->flatMap->approvers
+            ->flatMap(fn ($a) => $a->resolveUserIds())->unique();
+        $userNames = User::whereIn('id', $candidateUserIds)->pluck('name', 'id');
+
+        $templateApproverOptions = $templates
+            ->where('owner_can_customize_workflow', true)
+            ->mapWithKeys(fn ($t) => [(string) $t->id => $t->stages->map(fn ($s) => [
+                'stage_id' => $s->id,
+                'code' => $s->code,
+                'name' => $s->name,
+                'sequence_no' => $s->sequence_no,
+                'parallel_group' => $s->parallel_group,
+                'approval_mode' => $s->approval_mode,
+                'is_final' => (bool) $s->is_final_distribution_stage,
+                'candidates' => $s->candidateUserIds()
+                    ->map(fn ($uid) => ['id' => $uid, 'name' => $userNames[$uid] ?? "User #{$uid}"])
+                    ->values(),
+            ])->values()]);
+
+        // For the "add a stage" picker in the structural editor: every active user
+        // and every role, so a brand-new stage can be assigned to a role (whoever
+        // holds it at run time) or to named people.
+        $allUsers = User::where('is_active', true)->orderBy('name')->get(['id', 'name']);
+        $allRoles = Role::orderBy('name')->get(['id', 'name']);
         // Active workflow_rules, shaped for the create form's Alpine component to
         // do the same brand+type -> workflow lookup WorkflowResolver does
         // server-side, without a round trip - see resources/views/documents/create.blade.php.
@@ -68,7 +105,7 @@ class DocumentController extends Controller
             ->orderBy('priority')
             ->get(['workflow_template_id', 'brand_id', 'document_type_id', 'department', 'priority']);
 
-        return view('documents.create', compact('templates', 'projects', 'brands', 'documentTypes', 'workflowRules'));
+        return view('documents.create', compact('templates', 'projects', 'brands', 'documentTypes', 'workflowRules', 'templateApproverOptions', 'allUsers', 'allRoles'));
     }
 
     public function store(Request $request)
@@ -86,6 +123,17 @@ class DocumentController extends Controller
             // from brand + document type via WorkflowResolver below (spec REQ-26)
             // rather than forcing a manual pick when a rule already covers it.
             'workflow_template_id' => ['nullable', 'exists:workflow_templates,id'],
+            // Owner's per-stage approver picks: { "<workflow_stage_id>": ["<user_id>", ...] }.
+            // Only honoured when the resolved template has owner_can_customize_workflow
+            // = true; each user is validated against that stage's candidate pool below.
+            'stage_approvers' => ['nullable', 'array'],
+            'stage_approvers.*' => ['array', 'min:1'],
+            'stage_approvers.*.*' => ['integer', 'exists:users,id'],
+            // Structural customisation of the flow (add / remove / reorder stages),
+            // as a JSON string built by the create form's editor. When present it
+            // supersedes stage_approvers and the document gets its own private copy
+            // of the workflow - see resolveWorkflowEdit() / applyWorkflowEdit().
+            'workflow_edit' => ['nullable', 'json'],
             'project_id' => ['nullable', 'exists:projects,id'],
             'start_date' => ['nullable', 'date'],
             'expiry_date' => ['nullable', 'date', 'after_or_equal:start_date'],
@@ -119,6 +167,15 @@ class DocumentController extends Controller
             return back()->withErrors(['workflow_template_id' => 'No workflow could be determined automatically for this Brand/Document Type - please select one.'])->withInput();
         }
 
+        // Validate any owner workflow customisation against the resolved template
+        // *before* creating anything, so a bad pick fails cleanly with the form
+        // re-populated rather than leaving an orphan draft behind. A structural
+        // edit (add/remove/reorder) wins over plain approver picks.
+        $workflowEdit = $this->resolveWorkflowEdit($workflowTemplateId, $validated['workflow_edit'] ?? null);
+        $stageApproverPicks = $workflowEdit
+            ? []
+            : $this->resolveStageApproverPicks($workflowTemplateId, $validated['stage_approvers'] ?? []);
+
         $countries = $this->splitTags($validated['countries'] ?? null);
 
         $document = Document::create([
@@ -141,6 +198,37 @@ class DocumentController extends Controller
         ]);
 
         $this->audit->record(action: 'DOCUMENT_CREATED', document: $document, actor: $request->user(), newStatus: 'draft');
+
+        if ($stageApproverPicks) {
+            $rows = [];
+            foreach ($stageApproverPicks as $stageId => $userIds) {
+                foreach ($userIds as $userId) {
+                    $rows[] = ['workflow_stage_id' => $stageId, 'user_id' => $userId];
+                }
+            }
+            $document->stageApproverSelections()->createMany($rows);
+
+            $this->audit->record(
+                action: 'DOCUMENT_UPDATED',
+                document: $document,
+                actor: $request->user(),
+                description: 'Workflow approvers customised at upload for ' . count($stageApproverPicks) . ' stage(s).',
+            );
+        }
+
+        if ($workflowEdit) {
+            $shared = WorkflowTemplate::findOrFail($workflowTemplateId);
+            $clone = $shared->clonePrivateFor($document, $request->user());
+            $this->applyWorkflowEdit($clone, $workflowEdit);
+            $document->update(['workflow_template_id' => $clone->id]);
+
+            $this->audit->record(
+                action: 'DOCUMENT_UPDATED',
+                document: $document,
+                actor: $request->user(),
+                description: 'Approval flow customised at upload (stages added / removed / reordered) - private copy of "' . $shared->name . '".',
+            );
+        }
 
         $version = $this->versionService->storeNewVersion(
             document: $document,
@@ -438,6 +526,41 @@ class DocumentController extends Controller
     }
 
     /**
+     * Owner (or admin) toggles "let anyone in my department edit this document".
+     * Deliberately narrower than DocumentPolicy::update - a granted department
+     * editor can edit the document but can't re-open or lock editing for others.
+     */
+    public function updateEditingAccess(Request $request, Document $document)
+    {
+        abort_unless(
+            $request->user()->id === $document->owner_id || $request->user()->can('access-admin'),
+            403,
+            'Only the document owner or an admin can change editing access.'
+        );
+
+        $validated = $request->validate([
+            'allow_department_editing' => ['sometimes', 'boolean'],
+        ]);
+
+        $document->update([
+            'allow_department_editing' => $request->boolean('allow_department_editing'),
+        ]);
+
+        $this->audit->record(
+            action: 'DOCUMENT_UPDATED',
+            document: $document,
+            actor: $request->user(),
+            description: $document->allow_department_editing
+                ? 'Opened editing to the owner\'s department.'
+                : 'Restricted editing to owner / admin / Agency.',
+        );
+
+        return back()->with('status', $document->allow_department_editing
+            ? 'Anyone in your department can now edit this document.'
+            : 'Editing is restricted again.');
+    }
+
+    /**
      * Quick project (re)assignment for an already-created document - project_id is
      * optional at creation, so this covers assigning one later or moving a document
      * between projects.
@@ -641,6 +764,271 @@ class DocumentController extends Controller
 
         foreach ($users as $user) {
             $user->notify(new DocumentActionNotification(document: $document, event: $event, actor: $actor));
+        }
+    }
+
+    /**
+     * Turn the create form's raw `stage_approvers` input into a validated
+     * [workflow_stage_id => [user_id, ...]] map, or throw a ValidationException.
+     *
+     * Picks are only honoured when the template's admin has enabled
+     * owner_can_customize_workflow; every chosen user must already be a candidate
+     * for that stage (a role holder or a named approver on the template) - the
+     * owner narrows a pool to specific people, they can't introduce anyone new.
+     *
+     * @param  array<int|string, array<int, int|string>>  $raw
+     * @return array<int, array<int, int>>
+     */
+    protected function resolveStageApproverPicks(int $templateId, array $raw): array
+    {
+        $raw = array_filter($raw, fn ($ids) => ! empty($ids));
+
+        if ($raw === []) {
+            return [];
+        }
+
+        $template = WorkflowTemplate::with('stages.approvers.role', 'stages.approvers.user')->find($templateId);
+
+        if (! $template?->owner_can_customize_workflow) {
+            // Silently ignore stale/forged input for a template that doesn't allow it.
+            return [];
+        }
+
+        $stagesById = $template->stages->keyBy('id');
+        $picks = [];
+
+        foreach ($raw as $stageId => $userIds) {
+            $stage = $stagesById->get((int) $stageId);
+
+            if (! $stage) {
+                throw ValidationException::withMessages([
+                    'stage_approvers' => 'A selected stage does not belong to this workflow.',
+                ]);
+            }
+
+            $candidates = $stage->candidateUserIds();
+            $chosen = collect($userIds)->map(fn ($id) => (int) $id)->unique()->values();
+            $invalid = $chosen->diff($candidates);
+
+            if ($invalid->isNotEmpty()) {
+                throw ValidationException::withMessages([
+                    'stage_approvers' => "\"{$stage->name}\" was given an approver who isn't one of its candidates.",
+                ]);
+            }
+
+            $picks[$stage->id] = $chosen->all();
+        }
+
+        return $picks;
+    }
+
+    /**
+     * Validate the create form's structural workflow edit against the resolved
+     * template and return it as a normalised array, or null when there's no edit
+     * to apply. Throws a ValidationException (keyed `workflow_edit`) on anything
+     * malformed.
+     *
+     * Shape returned: ['stages' => [ ['type'=>'existing','code'=>..,'approvers_dirty'=>bool,'user_ids'=>[..]]
+     *                               | ['type'=>'new','name'=>..,'approval_mode'=>..,'role_ids'=>[..],'user_ids'=>[..]] ]]
+     * in final display order (removed stages already dropped).
+     */
+    protected function resolveWorkflowEdit(int $templateId, ?string $rawJson): ?array
+    {
+        if ($rawJson === null || trim($rawJson) === '') {
+            return null;
+        }
+
+        $decoded = json_decode($rawJson, true);
+        $stagesIn = is_array($decoded['stages'] ?? null) ? $decoded['stages'] : null;
+
+        if ($stagesIn === null) {
+            return null; // nothing usable - fall back to the default flow
+        }
+
+        $template = WorkflowTemplate::with('stages.approvers.role', 'stages.approvers.user')->find($templateId);
+
+        if (! $template?->owner_can_customize_workflow) {
+            throw ValidationException::withMessages(['workflow_edit' => 'This workflow may not be customised.']);
+        }
+
+        $stagesByCode = $template->stages->keyBy('code');
+        $modes = ['any_one', 'all_required', 'majority'];
+        $out = [];
+
+        foreach ($stagesIn as $row) {
+            if (($row['removed'] ?? false) === true) {
+                continue;
+            }
+
+            $isNew = ($row['isNew'] ?? false) === true;
+            $name = trim((string) ($row['name'] ?? ''));
+
+            if ($name === '') {
+                throw ValidationException::withMessages(['workflow_edit' => 'Every stage needs a name.']);
+            }
+
+            $userIds = collect($row['approverUserIds'] ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values();
+            $roleIds = collect($row['approverRoleIds'] ?? [])->map(fn ($id) => (int) $id)->filter()->unique()->values();
+
+            if ($isNew) {
+                $mode = in_array($row['approvalMode'] ?? null, $modes, true) ? $row['approvalMode'] : 'any_one';
+
+                if ($userIds->isEmpty() && $roleIds->isEmpty()) {
+                    throw ValidationException::withMessages(['workflow_edit' => "New stage \"{$name}\" needs at least one approver (a role or people)."]);
+                }
+                if ($roleIds->isNotEmpty() && Role::whereIn('id', $roleIds)->count() !== $roleIds->count()) {
+                    throw ValidationException::withMessages(['workflow_edit' => "New stage \"{$name}\" has an unknown role."]);
+                }
+                if ($userIds->isNotEmpty() && User::whereIn('id', $userIds)->where('is_active', true)->count() !== $userIds->count()) {
+                    throw ValidationException::withMessages(['workflow_edit' => "New stage \"{$name}\" has an unknown or inactive person."]);
+                }
+
+                $out[] = ['type' => 'new', 'name' => $name, 'approval_mode' => $mode, 'role_ids' => $roleIds->all(), 'user_ids' => $userIds->all()];
+
+                continue;
+            }
+
+            $stage = $stagesByCode->get($row['code'] ?? null);
+
+            if (! $stage) {
+                throw ValidationException::withMessages(['workflow_edit' => 'A stage in the edit does not belong to this workflow.']);
+            }
+
+            $dirty = ($row['approversDirty'] ?? false) === true;
+
+            if ($dirty) {
+                $invalid = $userIds->diff($stage->candidateUserIds());
+                if ($userIds->isEmpty() || $invalid->isNotEmpty()) {
+                    throw ValidationException::withMessages(['workflow_edit' => "\"{$stage->name}\" must keep at least one of its own candidate approvers."]);
+                }
+            }
+
+            $out[] = ['type' => 'existing', 'code' => $stage->code, 'name' => $name, 'approvers_dirty' => $dirty, 'user_ids' => $userIds->all()];
+        }
+
+        if ($out === []) {
+            throw ValidationException::withMessages(['workflow_edit' => 'The workflow must keep at least one stage.']);
+        }
+
+        return ['stages' => $out];
+    }
+
+    /**
+     * Rewrite a freshly-made private template copy ($clone) to match the owner's
+     * structural edit: drop removed stages, add new ones, apply the new order and
+     * any approver changes, then rebuild every transition on the "park it back with
+     * the owner on AwC/NA" model (the same shape the customisable templates are
+     * seeded with).
+     *
+     * @param  array{stages: array<int, array<string, mixed>>}  $edit
+     */
+    protected function applyWorkflowEdit(WorkflowTemplate $clone, array $edit): void
+    {
+        DB::transaction(function () use ($clone, $edit) {
+            $keptCodes = collect($edit['stages'])->where('type', 'existing')->pluck('code');
+
+            // Drop removed stages first (cascades their approvers + transitions).
+            $clone->stages()->whereNotIn('code', $keptCodes)->get()
+                ->each(fn ($s) => $s->delete());
+
+            // Park sequence numbers out of the way so the per-template
+            // (template_id, sequence_no) unique index can't trip while we reshuffle,
+            // then re-read the stages so their in-memory "original" reflects the
+            // parked values (otherwise Eloquent's dirty check can skip a write when
+            // a stage's new position happens to equal its pre-park number).
+            $clone->stages()->update(['sequence_no' => DB::raw('sequence_no + 1000')]);
+            $cloneStagesByCode = $clone->stages()->get()->keyBy('code');
+
+            $ordered = [];
+            $seq = 0;
+
+            foreach ($edit['stages'] as $row) {
+                $seq++;
+
+                if ($row['type'] === 'new') {
+                    $stage = $clone->stages()->create([
+                        'sequence_no' => $seq,
+                        'name' => $row['name'],
+                        'code' => 'CUSTOM_' . $seq . '_' . strtoupper(Str::random(4)),
+                        'approval_mode' => $row['approval_mode'],
+                    ]);
+                    foreach ($row['role_ids'] as $rid) {
+                        $stage->approvers()->create(['role_id' => $rid]);
+                    }
+                    foreach ($row['user_ids'] as $uid) {
+                        $stage->approvers()->create(['user_id' => $uid]);
+                    }
+                } else {
+                    $stage = $cloneStagesByCode->get($row['code']);
+                    $stage->update(['sequence_no' => $seq, 'name' => $row['name']]);
+
+                    if ($row['approvers_dirty']) {
+                        $stage->approvers()->delete();
+                        foreach ($row['user_ids'] as $uid) {
+                            $stage->approvers()->create(['user_id' => $uid]);
+                        }
+                    }
+                }
+
+                $ordered[] = $stage->fresh();
+            }
+
+            $this->rebuildTransitions($ordered);
+        });
+    }
+
+    /**
+     * Wire a fresh set of transitions for a customised private flow, one primary
+     * per parallel group: approved -> next stage (or complete at the end), and
+     * AwC/NA -> back to the owner to revise (NA at the very first stage is a hard
+     * stop). Mirrors Database\Seeders\Concerns\WiresLinearApprovalChain's
+     * reviseWithOwner wiring.
+     *
+     * @param  array<int, WorkflowStage>  $ordered
+     */
+    protected function rebuildTransitions(array $ordered): void
+    {
+        $ids = collect($ordered)->pluck('id');
+        WorkflowTransition::whereIn('workflow_stage_id', $ids)->delete();
+        WorkflowStage::whereIn('id', $ids)->update(['is_final_distribution_stage' => false]);
+
+        $firstId = $ordered[0]->id;
+        $lastIndex = count($ordered) - 1;
+        $groupPrimary = [];
+
+        foreach ($ordered as $i => $stage) {
+            $isLast = $i === $lastIndex;
+
+            if ($stage->parallel_group) {
+                if (isset($groupPrimary[$stage->parallel_group])) {
+                    continue; // non-primary group members are driven by the primary
+                }
+                $groupPrimary[$stage->parallel_group] = $stage->id;
+            }
+
+            if ($isLast) {
+                $stage->update(['is_final_distribution_stage' => true]);
+            }
+
+            WorkflowTransition::create([
+                'workflow_stage_id' => $stage->id,
+                'decision' => 'approved',
+                'outcome_type' => $isLast ? 'complete_approved' : 'next_stage',
+            ]);
+
+            WorkflowTransition::create([
+                'workflow_stage_id' => $stage->id,
+                'decision' => 'approved_with_changes',
+                'outcome_type' => 'return_to_owner',
+                'resume_at_stage_id' => $stage->id,
+            ]);
+
+            WorkflowTransition::create([
+                'workflow_stage_id' => $stage->id,
+                'decision' => 'not_approved',
+                'outcome_type' => $stage->id === $firstId ? 'terminate_rejected' : 'return_to_owner',
+                'resume_at_stage_id' => $stage->id === $firstId ? null : $stage->id,
+            ]);
         }
     }
 

@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Hash;
  */
 class DemoUsersSeeder extends Seeder
 {
-    public const DEMO_PASSWORD = 'Demo@12345';
+    public const DEMO_PASSWORD = 'welcome';
 
     public function run(): void
     {

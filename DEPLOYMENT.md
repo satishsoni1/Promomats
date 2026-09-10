@@ -60,9 +60,11 @@ wrong.
 
 **Do not** run `DemoUsersSeeder` or `DatabaseSeeder`'s demo data against production -
 they create real login accounts with a shared, publicly-documented password
-(`Demo@12345`, see `database/seeders/DemoUsersSeeder.php`). They're for local/demo
-use only. The `admin@example.com` / `ChangeMe123!` seeded admin account should have
-its password changed immediately after the first real login, for the same reason.
+(`welcome`, see `database/seeders/DemoUsersSeeder.php`). The Himalaya and Scientific
+Publications user seeders also use `welcome` (with a forced password change on first
+login) - swap those back to an unusable random hash for production. They're for
+local/demo/UAT only. The `admin@globalspace.in` / `welcome` seeded admin account
+should have its password changed immediately after the first real login.
 
 ## 4. Queue worker (required)
 

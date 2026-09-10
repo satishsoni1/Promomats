@@ -14,7 +14,7 @@ class User extends Authenticatable
     use HasFactory, Notifiable, SoftDeletes;
 
     protected $fillable = [
-        'name', 'employee_code', 'email', 'department', 'designation',
+        'name', 'employee_code', 'email', 'department', 'admin_department', 'designation',
         'password', 'is_active', 'must_change_password', 'created_by',
     ];
 
@@ -47,6 +47,43 @@ class User extends Authenticatable
         return $this->roles()
             ->whereHas('permissions', fn ($q) => $q->where('slug', $permissionSlug))
             ->exists();
+    }
+
+    /** Full, unscoped administrator. */
+    public function isGlobalAdmin(): bool
+    {
+        return $this->hasRole('admin');
+    }
+
+    /** Admin whose reach is limited to one department (see admin_department). */
+    public function isDepartmentAdmin(): bool
+    {
+        return ! $this->isGlobalAdmin()
+            && $this->hasRole('department-admin')
+            && filled($this->admin_department);
+    }
+
+    /** Can reach the /admin area at all (global admin, or a scoped department admin). */
+    public function canAdminister(): bool
+    {
+        return $this->isGlobalAdmin() || $this->isDepartmentAdmin();
+    }
+
+    /**
+     * The department this user's admin powers are limited to, or null when they're a
+     * global admin (no limit). Callers scope their queries by this: null => no filter.
+     */
+    public function adminDepartmentScope(): ?string
+    {
+        return $this->isGlobalAdmin() ? null : ($this->admin_department ?: null);
+    }
+
+    /** Whether this admin may act on something belonging to $department. */
+    public function adminCanReachDepartment(?string $department): bool
+    {
+        $scope = $this->adminDepartmentScope();
+
+        return $scope === null || $scope === $department;
     }
 
     public function ownedDocuments()

@@ -61,8 +61,9 @@ php artisan db:seed
 php artisan storage:link
 ```
 
-Default admin login after seeding: `admin@example.com` / `ChangeMe123!`
-— **change this immediately.**
+Default admin login after seeding: `admin@globalspace.in` / `welcome`
+— **change this immediately.** All demo, Himalaya and Scientific Publications
+seeded accounts also use the password `welcome`.
 
 For large-file uploads (100MB+), also raise in `php.ini`:
 ```ini

@@ -64,7 +64,7 @@
                 </a>
             @endforeach
 
-            @can('access-admin')
+            @can('access-admin-area')
                 <div class="pt-4 mt-4 border-t border-white/10">
                     <a href="{{ route('admin.workflows.index') }}"
                        class="group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {{ request()->routeIs('admin.*') ? 'bg-white/10 text-white' : 'text-teal-100/70 hover:bg-white/5 hover:text-white' }}">

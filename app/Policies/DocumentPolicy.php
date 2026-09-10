@@ -27,7 +27,9 @@ class DocumentPolicy
      */
     public function update(User $user, Document $document): bool
     {
-        return $user->id === $document->owner_id || $user->can('access-admin');
+        return $user->id === $document->owner_id
+            || $user->can('access-admin')
+            || $document->openToDepartmentEditor($user);
     }
 
     /**
@@ -38,7 +40,10 @@ class DocumentPolicy
      */
     public function uploadVersion(User $user, Document $document): bool
     {
-        return $user->id === $document->owner_id || $user->can('access-admin') || $user->hasRole('agency');
+        return $user->id === $document->owner_id
+            || $user->can('access-admin')
+            || $user->hasRole('agency')
+            || $document->openToDepartmentEditor($user);
     }
 
     /**

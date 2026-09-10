@@ -9,13 +9,19 @@ use App\Models\DocumentWorkflowInstance;
 use App\Models\Project;
 use App\Models\ProjectCycle;
 use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 
 class DashboardController extends Controller
 {
-    public function index()
+    /** Department a department-admin is scoped to (null for a global admin). */
+    protected ?string $scope = null;
+
+    public function index(Request $request)
     {
-        $statusCounts = Document::selectRaw('status, count(*) as c')->groupBy('status')->pluck('c', 'status');
+        $this->scope = $request->user()->adminDepartmentScope();
+
+        $statusCounts = $this->documents()->selectRaw('status, count(*) as c')->groupBy('status')->pluck('c', 'status');
 
         $materialsByStatus = collect(Document::STATUS_LABELS)->map(fn ($label, $status) => [
             'label' => $label,
@@ -26,6 +32,7 @@ class DashboardController extends Controller
 
         $completedInstances = DocumentWorkflowInstance::whereIn('status', ['approved', 'approved_with_changes', 'rejected'])
             ->whereNotNull('completed_at')
+            ->when($this->scope, fn ($q) => $q->whereHas('document.owner', fn ($u) => $u->where('department', $this->scope)))
             ->get(['started_at', 'completed_at']);
 
         $avgApprovalDays = $completedInstances->isEmpty()
@@ -34,7 +41,7 @@ class DashboardController extends Controller
 
         // Documents created per month, last 12 months (zero-filled).
         $months = collect(range(0, 11))->map(fn ($i) => Carbon::now()->subMonths(11 - $i)->startOfMonth());
-        $createdByMonthRaw = Document::selectRaw("DATE_FORMAT(created_at, '%Y-%m') as ym, count(*) as c")
+        $createdByMonthRaw = $this->documents()->selectRaw("DATE_FORMAT(created_at, '%Y-%m') as ym, count(*) as c")
             ->where('created_at', '>=', Carbon::now()->subMonths(11)->startOfMonth())
             ->groupBy('ym')->pluck('c', 'ym');
         $contentByMonth = $months->map(fn ($m) => [
@@ -43,6 +50,7 @@ class DashboardController extends Controller
         ]);
 
         $overdueAssignees = DocumentStageAssignee::where('status', 'pending')
+            ->when($this->scope, fn ($q) => $q->whereHas('instance.document.owner', fn ($u) => $u->where('department', $this->scope)))
             ->with(['user', 'stage', 'instance.document'])
             ->get()
             ->filter(fn ($assignee) => $assignee->isOverdue());
@@ -65,7 +73,7 @@ class DashboardController extends Controller
         // File-level: documents that need attention right now regardless of
         // approval-SLA status (the section above already covers that angle) -
         // revision loops and rejections, oldest first so the longest-stuck float up.
-        $needsAttention = Document::whereIn('status', ['approved_with_changes_pending', 'rejected'])
+        $needsAttention = $this->documents()->whereIn('status', ['approved_with_changes_pending', 'rejected'])
             ->with('owner')
             ->orderBy('status_changed_at')
             ->limit(15)
@@ -74,7 +82,18 @@ class DashboardController extends Controller
         return view('admin.dashboards.index', compact(
             'materialsByStatus', 'approvedMaterials', 'avgApprovalDays', 'contentByMonth', 'overdueTasks',
             'byProject', 'byCycle', 'byUser', 'needsAttention'
-        ));
+        ))->with('departmentScope', $this->scope);
+    }
+
+    /**
+     * Base Document query, filtered to the acting admin's department (via the
+     * document owner) when they're a department admin. A global admin gets an
+     * unfiltered query.
+     */
+    protected function documents()
+    {
+        return Document::query()
+            ->when($this->scope, fn ($q) => $q->whereHas('owner', fn ($u) => $u->where('department', $this->scope)));
     }
 
     /**
@@ -134,6 +153,7 @@ class DashboardController extends Controller
     protected function userWorkload($overdueAssignees)
     {
         $users = User::where('is_active', true)
+            ->when($this->scope, fn ($q) => $q->where('department', $this->scope))
             ->withCount(['ownedDocuments', 'pendingApprovals'])
             ->having('owned_documents_count', '>', 0)
             ->orHaving('pending_approvals_count', '>', 0)

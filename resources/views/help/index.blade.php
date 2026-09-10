@@ -3,6 +3,7 @@
         'overview' => 'Overview',
         'roles-workflows' => 'Roles & Workflows',
         'upload' => 'Uploading a Document',
+        'customise-flow' => 'Per-Document Flow Customisation',
         'submit' => 'Submitting for Review',
         'approve' => 'Approving / Rejecting',
         'versions' => 'Version Control & Revisions',
@@ -67,9 +68,11 @@
                     <div id="roles-workflows" class="bg-white shadow-sm ring-1 ring-gray-900/5 rounded-lg p-6 scroll-mt-6">
                         <h3 class="text-lg font-semibold text-gray-900 mb-3">Roles &amp; Workflows</h3>
                         <p class="text-sm text-gray-700 mb-3">
-                            Three workflow templates are pre-configured (Admin → Workflows lets you edit
-                            stage order, approvers, and A/AwC/NA rules for any of them, or build new ones):
+                            Workflow templates are grouped by the team that owns them. Admin → Workflows lets
+                            you edit stage order, approvers, and A/AwC/NA rules for any of them, or build new
+                            ones. The pre-configured sets are:
                         </p>
+                        <p class="text-sm font-semibold text-gray-800 mt-3 mb-1">Pharma</p>
                         <ul class="text-sm text-gray-700 space-y-2 list-disc list-inside">
                             <li><strong>Pharma Workflow 1</strong> — 10-stage chain for new promotional
                                 material: Content Manager → TM/AGM Marketing → Regulatory (L1/L2) → Legal
@@ -81,9 +84,35 @@
                             <li><strong>Pharma Workflow 3</strong> — single-stage fast path for adapting
                                 already-approved content: one TM/AGM Marketing sign-off.</li>
                         </ul>
+                        <p class="text-sm font-semibold text-gray-800 mt-4 mb-1">Himalaya PromoMats</p>
+                        <ul class="text-sm text-gray-700 space-y-2 list-disc list-inside">
+                            <li><strong>PromoMats Workflow (Word / Video / PPT)</strong> and
+                                <strong>PromoMats Workflow (PDF / JPG / GIF)</strong> — wired to the named
+                                Himalaya Wellness approvers, ending in a parallel MLR block (Medical /
+                                Regulatory / Legal) and a Chairperson sign-off.</li>
+                        </ul>
+                        <p class="text-sm font-semibold text-gray-800 mt-4 mb-1">Scientific Publications</p>
+                        <ul class="text-sm text-gray-700 space-y-2 list-disc list-inside">
+                            <li><strong>Scientific Publications – Workflow 1 (Full Proof Cycle)</strong> —
+                                Content Review → Copy Editing → Proof Zero → Proof One → Proof Two (Project
+                                Lead ∥ AGM) → Proof Three (Project Lead ∥ Proofreading) → Proof Four review
+                                (Regulatory ∥ Legal ∥ Document Owner, in parallel) → Proof Four Feedback →
+                                Proof Five → Check Pre-MP → Check MP / Approved for Distribution.</li>
+                            <li><strong>Scientific Publications – Workflow 2 (Line Manager)</strong> — the
+                                short path: a single Line Manager approval before production.</li>
+                        </ul>
+                        <p class="text-sm text-gray-500 mt-3">
+                            The Scientific Publications team has its own people (Content Developers, Content
+                            Reviewers, Copy / Proofing Editors, Graphic Designers, Project Leads, plus the
+                            AGM, Head – Regulatory Affairs and Legal approvers) and its own
+                            <strong>Publications</strong> — Probe, Evecare, Confido, and the rest — seeded as
+                            Projects so each title's documents group together.
+                        </p>
                         <p class="text-sm text-gray-500 mt-3">
                             Your account's roles determine what you're asked to approve. Admin → Users lets
-                            an administrator create accounts and assign roles.
+                            an administrator create accounts and assign roles. Both Scientific Publications
+                            and Himalaya named accounts are created without a usable password — grant access
+                            with a password-reset link, never a shared default.
                         </p>
                     </div>
 
@@ -94,12 +123,48 @@
                             <li>Fill in title, description, category, and optionally product(s)/country(ies)
                                 (comma-separated if more than one — this drives the reference number prefix).</li>
                             <li>Pick the approval workflow this document should follow.</li>
+                            <li>If that workflow allows it, an <strong>Approvers for this workflow</strong>
+                                panel appears — narrow any stage to a specific person, or open
+                                <strong>Edit stages…</strong> to add / remove / reorder stages for this one
+                                document (see the next section).</li>
                             <li>Optionally set a start date, expiry date, and aging-warning window.</li>
                             <li>Attach the file — any type, up to 500MB — and upload.</li>
                         </ol>
                         <p class="text-sm text-gray-500 mt-3">
                             The document starts in <strong>Draft</strong>. It isn't visible to any approver
                             until you submit it.
+                        </p>
+                    </div>
+
+                    <div id="customise-flow" class="bg-white shadow-sm ring-1 ring-gray-900/5 rounded-lg p-6 scroll-mt-6">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-3">Per-Document Flow Customisation</h3>
+                        <p class="text-sm text-gray-700 mb-3">
+                            An administrator can tick <strong>“Let the document owner pick approvers at
+                            upload”</strong> on any workflow (Admin → Workflows → the workflow’s
+                            <strong>Settings</strong> card). When that’s on, the uploader gets two levels of
+                            control on the create form — everything else about the workflow stays exactly as
+                            the admin configured it:
+                        </p>
+                        <ol class="text-sm text-gray-700 space-y-2 list-decimal list-inside">
+                            <li><strong>Pick approvers per stage.</strong> Each stage lists its candidate
+                                people with every box ticked. Untick to send that stage to one named person
+                                (for example, the specific Project Lead for a publication). You can only
+                                narrow a stage to people the template already allows — you can’t add someone
+                                new here. Leaving every box ticked keeps the default group.</li>
+                            <li><strong>Edit the stage list.</strong> Click <strong>Edit stages…</strong> to
+                                reorder stages with the ↑ / ↓ arrows, <strong>Remove</strong> a stage, or
+                                <strong>+ Add stage</strong> (give it a name, an approval mode, and assign it
+                                to one or more roles and/or specific people). This applies to
+                                <em>this document only</em>.</li>
+                        </ol>
+                        <p class="text-sm text-gray-700 mt-3">
+                            Reordering / removing / adding stages gives the document its own private copy of
+                            the workflow. The shared template is never touched, the copy is hidden from the
+                            admin workflow list and auto-assignment, and the document page shows the original
+                            workflow name with a <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Customised</span>
+                            badge. The approval engine then runs that copy exactly like any other workflow —
+                            AwC / NA still parks the document with the owner to revise and resubmit, and NA at
+                            the first stage is still a hard stop.
                         </p>
                     </div>
 
@@ -133,6 +198,13 @@
                             Resubmit</strong>: the owner uploads a new version with change notes and
                             resubmits, and the workflow automatically resumes at the stage that sent it back
                             — it doesn't restart from scratch.
+                        </p>
+                        <p class="text-sm text-gray-700 mt-2">
+                            By default only the owner, an admin, or an Agency user can edit a document's
+                            metadata or upload new versions. On the document page the owner can flip
+                            <strong>Editing access</strong> to “anyone in my department can edit” — handy when
+                            a team shares drafting. Deciding to <em>submit</em> a version into the workflow
+                            always stays with the owner.
                         </p>
                     </div>
 
@@ -210,9 +282,18 @@
                         <h3 class="text-lg font-semibold text-gray-900 mb-3">Admin Functions</h3>
                         <ul class="text-sm text-gray-700 space-y-1.5 list-disc list-inside">
                             <li><strong>Users</strong> — create accounts, assign/change roles for anyone.</li>
+                            <li><strong>Department Admin</strong> — a user given the “Department Admin” role
+                                and a department manages <em>only</em> the Users, Workflows, Workflow Rules
+                                and dashboard data for that one department; they can’t reach system
+                                settings, Roles, Brands, Claims, etc., and can’t create other admins. The
+                                full “Admin” role stays global and unscoped. Anyone without one of these two
+                                roles can’t open the admin area at all.</li>
                             <li><strong>Roles</strong> — create custom roles and permission sets.</li>
                             <li><strong>Workflows</strong> — build new templates or edit stage order,
-                                approvers, and A/AwC/NA transition rules on existing ones.</li>
+                                approvers, and A/AwC/NA transition rules on existing ones. Each workflow’s
+                                <strong>Settings</strong> card has <strong>“Let the document owner pick
+                                approvers at upload”</strong> — safe to toggle even on a locked workflow, as
+                                it never rewrites an in-flight document (see Per-Document Flow Customisation).</li>
                             <li><strong>Claims</strong> and <strong>Content Modules</strong> — manage the
                                 reusable claims library.</li>
                         </ul>

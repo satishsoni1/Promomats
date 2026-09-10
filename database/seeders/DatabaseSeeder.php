@@ -14,11 +14,11 @@ class DatabaseSeeder extends Seeder
         $this->call(RolesAndPermissionsSeeder::class);
 
         $admin = User::firstOrCreate(
-            ['email' => 'admin@example.com'],
+            ['email' => 'admin@globalspace.in'],
             [
                 'name' => 'System Admin',
                 'employee_code' => 'ADM001',
-                'password' => Hash::make('ChangeMe123!'), // change immediately after first login
+                'password' => Hash::make('welcome'), // change immediately after first login
                 'is_active' => true,
             ]
         );
@@ -35,6 +35,13 @@ class DatabaseSeeder extends Seeder
         $this->call(HimalayaWellnessUsersSeeder::class);
         $this->call(HimalayaPromoMatsPdfWorkflowSeeder::class);
         $this->call(HimalayaPromoMatsDocWorkflowSeeder::class);
+
+        // Scientific Publications - a separate team with its own people, its own
+        // two workflows, and its own publications list (seeded as projects).
+        $this->call(ScientificPublicationsUsersSeeder::class);
+        $this->call(ScientificPublicationsProjectsSeeder::class);
+        $this->call(ScientificPublicationsWorkflow1Seeder::class);
+        $this->call(ScientificPublicationsWorkflow2Seeder::class);
 
         $this->call(BrandAndDocumentTypeSeeder::class);
 

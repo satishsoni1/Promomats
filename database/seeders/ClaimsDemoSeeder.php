@@ -15,7 +15,7 @@ class ClaimsDemoSeeder extends Seeder
 {
     public function run(): void
     {
-        $admin = User::where('email', 'admin@example.com')->first();
+        $admin = User::where('email', 'admin@globalspace.in')->first();
 
         $claim1 = Claim::firstOrCreate(
             ['match_text' => '45% reduction in risk of disease progression'],

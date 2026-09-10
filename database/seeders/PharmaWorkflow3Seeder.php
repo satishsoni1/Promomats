@@ -19,7 +19,7 @@ class PharmaWorkflow3Seeder extends Seeder
 
     public function run(): void
     {
-        $admin = User::where('email', 'admin@example.com')->first() ?? User::first();
+        $admin = User::where('email', 'admin@globalspace.in')->first() ?? User::first();
 
         $template = WorkflowTemplate::firstOrCreate(
             ['code' => 'WF3'],

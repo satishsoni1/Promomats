@@ -34,7 +34,13 @@
                     <div class="grid grid-cols-2 gap-4">
                         <div>
                             <x-input-label for="department" value="Department" />
-                            <x-text-input id="department" name="department" class="mt-1 block w-full" :value="old('department')" />
+                            @if (! empty($departmentScope))
+                                <x-text-input id="department" name="department" class="mt-1 block w-full bg-gray-50" :value="$departmentScope" readonly />
+                                <p class="mt-1 text-xs text-gray-500">You can only create users in your department.</p>
+                            @else
+                                <x-text-input id="department" name="department" class="mt-1 block w-full" :value="old('department')" />
+                            @endif
+                            <x-input-error :messages="$errors->get('department')" class="mt-2" />
                         </div>
                         <div>
                             <x-input-label for="designation" value="Designation" />

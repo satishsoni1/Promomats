@@ -189,8 +189,36 @@
                             </div>
                             <div>
                                 <dt class="text-xs text-gray-400 mb-0.5">Workflow</dt>
-                                <dd class="text-gray-900">{{ $document->workflowTemplate?->name ?? '—' }}</dd>
+                                <dd class="text-gray-900">
+                                    @if ($document->workflowTemplate?->is_private)
+                                        {{ $document->workflowTemplate->derivedFrom?->name ?? $document->workflowTemplate->name }}
+                                        <span class="ml-1 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Customised</span>
+                                    @else
+                                        {{ $document->workflowTemplate?->name ?? '—' }}
+                                    @endif
+                                </dd>
                             </div>
+                            @if ($isOwner || auth()->user()->can('access-admin'))
+                                <div>
+                                    <dt class="text-xs text-gray-400 mb-0.5">Editing access</dt>
+                                    <dd class="text-gray-900">
+                                        <form method="POST" action="{{ route('documents.editing-access.update', $document) }}" class="inline-flex items-center gap-2">
+                                            @csrf
+                                            <input type="hidden" name="allow_department_editing" value="0">
+                                            <label class="inline-flex items-center gap-2 text-sm">
+                                                <input type="checkbox" name="allow_department_editing" value="1" @checked($document->allow_department_editing) onchange="this.form.submit()" class="rounded border-gray-300 text-brand-600">
+                                                Anyone in {{ $document->owner?->department ?: 'the owner\'s department' }} can edit
+                                            </label>
+                                        </form>
+                                        <p class="text-xs text-gray-400 mt-0.5">Off: only you, an admin, or Agency. Submitting into the workflow always stays with you.</p>
+                                    </dd>
+                                </div>
+                            @elseif ($document->allow_department_editing)
+                                <div>
+                                    <dt class="text-xs text-gray-400 mb-0.5">Editing access</dt>
+                                    <dd class="text-gray-900 text-sm">Open to {{ $document->owner?->department ?: 'the owner\'s department' }}</dd>
+                                </div>
+                            @endif
                             <div>
                                 <dt class="text-xs text-gray-400 mb-0.5">Project</dt>
                                 <dd class="text-gray-900">

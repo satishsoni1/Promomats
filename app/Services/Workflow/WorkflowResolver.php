@@ -35,6 +35,8 @@ class WorkflowResolver
 
         $template = $rule?->template;
 
-        return ($template && $template->is_active) ? $template : null;
+        // is_private templates are per-document customised copies (owner customisation
+        // at upload) - never auto-resolved for a new document.
+        return ($template && $template->is_active && ! $template->is_private) ? $template : null;
     }
 }

@@ -13,11 +13,11 @@ use Illuminate\Support\Str;
  * (HimalayaPromoMatsPdfWorkflowSeeder / HimalayaPromoMatsDocWorkflowSeeder), which
  * wire specific individuals - not generic roles - as stage approvers.
  *
- * Every account is created with a random, unusable initial password and
- * must_change_password=true: nobody can sign in with it, so it does not need to be
- * distributed. Give each person access via the normal "Forgot password" flow (or an
- * admin-triggered reset) rather than sharing a shared/default password for real
- * corporate accounts.
+ * Every account is created with the shared default password "welcome" and
+ * must_change_password=true, so a client can sign in as any of these people to try
+ * the flow and is prompted to set a real password on first login. For a production
+ * rollout, switch this back to an unusable random hash and grant access via the
+ * "Forgot password" flow instead.
  */
 class HimalayaWellnessUsersSeeder extends Seeder
 {
@@ -59,9 +59,9 @@ class HimalayaWellnessUsersSeeder extends Seeder
                     'employee_code' => 'HW-' . strtoupper(Str::slug($p['name'], '')),
                     'department' => $p['dept'],
                     'designation' => $p['roles'][0],
-                    // Unusable random hash - nobody can log in with this. Real access is
-                    // granted via password reset, not by sharing this value.
-                    'password' => Hash::make(Str::random(40)),
+                    // Shared default password for demo/UAT - user is forced to change it
+                    // on first login. Swap for Hash::make(Str::random(40)) in production.
+                    'password' => Hash::make('welcome'),
                     'is_active' => true,
                     'must_change_password' => true,
                 ]
@@ -71,6 +71,6 @@ class HimalayaWellnessUsersSeeder extends Seeder
             $user->roles()->syncWithoutDetaching($roleIds);
         }
 
-        $this->command?->info('Himalaya Wellness users seeded (15). Accounts have no usable password - send each person a password-reset link to grant access.');
+        $this->command?->info('Himalaya Wellness users seeded (15). Default password "welcome" (must change on first login).');
     }
 }

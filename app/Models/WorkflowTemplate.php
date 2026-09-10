@@ -8,13 +8,29 @@ use Illuminate\Support\Facades\DB;
 class WorkflowTemplate extends Model
 {
     protected $fillable = [
-        'name', 'code', 'family_code', 'version', 'description', 'applies_to_category', 'target_audiences', 'is_active', 'created_by',
+        'name', 'code', 'family_code', 'version', 'description', 'applies_to_category', 'department', 'target_audiences', 'is_active', 'owner_can_customize_workflow', 'is_private', 'derived_from_template_id', 'created_by',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'owner_can_customize_workflow' => 'boolean',
+        'is_private' => 'boolean',
         'target_audiences' => 'array',
     ];
+
+    /**
+     * Only the shared, admin-managed templates - excludes the per-document private
+     * copies made by owner customisation at upload (see clonePrivateFor()).
+     */
+    public function scopeShared($query)
+    {
+        return $query->where('is_private', false);
+    }
+
+    public function derivedFrom()
+    {
+        return $this->belongsTo(self::class, 'derived_from_template_id');
+    }
 
     protected static function booted(): void
     {
@@ -97,8 +113,10 @@ class WorkflowTemplate extends Model
                 'version' => $nextVersion,
                 'description' => $this->description,
                 'applies_to_category' => $this->applies_to_category,
+                'department' => $this->department,
                 'target_audiences' => $this->target_audiences,
                 'is_active' => true,
+                'owner_can_customize_workflow' => (bool) $this->owner_can_customize_workflow,
                 'created_by' => $admin->id,
             ]);
 
@@ -108,44 +126,87 @@ class WorkflowTemplate extends Model
                 ->where('id', '!=', $newTemplate->id)
                 ->update(['is_active' => false]);
 
-            $stageIdMap = [];
-
-            foreach ($this->stages()->with('approvers')->get() as $oldStage) {
-                $newStage = $newTemplate->stages()->create([
-                    'sequence_no' => $oldStage->sequence_no,
-                    'name' => $oldStage->name,
-                    'code' => $oldStage->code,
-                    'parallel_group' => $oldStage->parallel_group,
-                    'approval_mode' => $oldStage->approval_mode,
-                    'quorum_count' => $oldStage->quorum_count,
-                    'is_revision_stage' => $oldStage->is_revision_stage,
-                    'is_final_distribution_stage' => $oldStage->is_final_distribution_stage,
-                    'sla_hours' => $oldStage->sla_hours,
-                ]);
-
-                $stageIdMap[$oldStage->id] = $newStage->id;
-
-                foreach ($oldStage->approvers as $approver) {
-                    $newStage->approvers()->create([
-                        'role_id' => $approver->role_id,
-                        'user_id' => $approver->user_id,
-                    ]);
-                }
-            }
-
-            foreach ($this->stages()->with('transitions')->get() as $oldStage) {
-                foreach ($oldStage->transitions as $transition) {
-                    WorkflowTransition::create([
-                        'workflow_stage_id' => $stageIdMap[$oldStage->id],
-                        'decision' => $transition->decision,
-                        'outcome_type' => $transition->outcome_type,
-                        'target_stage_id' => $transition->target_stage_id ? ($stageIdMap[$transition->target_stage_id] ?? null) : null,
-                        'resume_at_stage_id' => $transition->resume_at_stage_id ? ($stageIdMap[$transition->resume_at_stage_id] ?? null) : null,
-                    ]);
-                }
-            }
+            $this->copyStructureInto($newTemplate);
 
             return $newTemplate;
         });
+    }
+
+    /**
+     * Make a private, per-document copy of this shared template for one document -
+     * the backing store for owner customisation of the stage list at upload time
+     * (DocumentController::applyWorkflowEdit() then adds / removes / reorders
+     * stages on the copy). Never active, never private-scoped away from the one
+     * document that points at it.
+     */
+    public function clonePrivateFor(Document $document, User $actor): self
+    {
+        return DB::transaction(function () use ($document, $actor) {
+            $clone = static::create([
+                'name' => $this->name . ' — ' . $document->reference_no,
+                'code' => $this->code . '-DOC' . $document->id,
+                'description' => 'Per-document customised copy of "' . $this->name . '" for ' . $document->reference_no . '.',
+                'applies_to_category' => $this->applies_to_category,
+                'department' => $this->department,
+                'target_audiences' => $this->target_audiences,
+                'is_active' => false,
+                'owner_can_customize_workflow' => false,
+                'is_private' => true,
+                'derived_from_template_id' => $this->id,
+                'created_by' => $actor->id,
+            ]);
+
+            $this->copyStructureInto($clone);
+
+            return $clone;
+        });
+    }
+
+    /**
+     * Deep-copy this template's stages, their approver rules, and their transitions
+     * into $target (assumed to have none yet). Returns [old stage id => new stage id].
+     *
+     * @return array<int, int>
+     */
+    protected function copyStructureInto(self $target): array
+    {
+        $stageIdMap = [];
+
+        foreach ($this->stages()->with('approvers')->get() as $oldStage) {
+            $newStage = $target->stages()->create([
+                'sequence_no' => $oldStage->sequence_no,
+                'name' => $oldStage->name,
+                'code' => $oldStage->code,
+                'parallel_group' => $oldStage->parallel_group,
+                'approval_mode' => $oldStage->approval_mode,
+                'quorum_count' => $oldStage->quorum_count,
+                'is_revision_stage' => $oldStage->is_revision_stage,
+                'is_final_distribution_stage' => $oldStage->is_final_distribution_stage,
+                'sla_hours' => $oldStage->sla_hours,
+            ]);
+
+            $stageIdMap[$oldStage->id] = $newStage->id;
+
+            foreach ($oldStage->approvers as $approver) {
+                $newStage->approvers()->create([
+                    'role_id' => $approver->role_id,
+                    'user_id' => $approver->user_id,
+                ]);
+            }
+        }
+
+        foreach ($this->stages()->with('transitions')->get() as $oldStage) {
+            foreach ($oldStage->transitions as $transition) {
+                WorkflowTransition::create([
+                    'workflow_stage_id' => $stageIdMap[$oldStage->id],
+                    'decision' => $transition->decision,
+                    'outcome_type' => $transition->outcome_type,
+                    'target_stage_id' => $transition->target_stage_id ? ($stageIdMap[$transition->target_stage_id] ?? null) : null,
+                    'resume_at_stage_id' => $transition->resume_at_stage_id ? ($stageIdMap[$transition->resume_at_stage_id] ?? null) : null,
+                ]);
+            }
+        }
+
+        return $stageIdMap;
     }
 }

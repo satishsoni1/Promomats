@@ -20,7 +20,7 @@ class HelpController extends Controller
      */
     public function demoScript()
     {
-        $workflows = WorkflowTemplate::withCount('stages')->orderBy('id')->get();
+        $workflows = WorkflowTemplate::shared()->withCount('stages')->orderBy('id')->get();
 
         $demoUsers = User::where('email', 'like', '%promomats.test')
             ->with('roles')

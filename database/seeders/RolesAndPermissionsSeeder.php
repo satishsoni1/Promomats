@@ -31,6 +31,7 @@ class RolesAndPermissionsSeeder extends Seeder
         // Roles mapped directly from the pharma approval diagram, plus Admin for system administration.
         $roles = [
             'Admin' => true,
+            'Department Admin' => false,
             'TM/AGM Marketing' => false,
             'Document Owner' => false,
             'Content Manager' => false,
@@ -53,6 +54,12 @@ class RolesAndPermissionsSeeder extends Seeder
 
             if ($name === 'Admin') {
                 $role->permissions()->sync(Permission::pluck('id'));
+            } elseif ($name === 'Department Admin') {
+                // Same management surface as Admin minus system settings/roles - the
+                // controllers scope it to the user's admin_department at runtime.
+                $role->permissions()->sync(
+                    Permission::whereIn('slug', ['manage-users', 'manage-workflows', 'view-all-documents', 'view-reports'])->pluck('id')
+                );
             } elseif (in_array($name, ['TM/AGM Marketing', 'Document Owner'])) {
                 $role->permissions()->sync(
                     Permission::whereIn('slug', ['upload-documents', 'view-all-documents', 'approve-documents'])->pluck('id')

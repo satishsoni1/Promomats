@@ -20,7 +20,7 @@ class BrandAndDocumentTypeSeeder extends Seeder
 {
     public function run(): void
     {
-        $admin = User::where('email', 'admin@example.com')->first() ?? User::first();
+        $admin = User::where('email', 'admin@globalspace.in')->first() ?? User::first();
 
         $brands = [
             'Liv.52', 'Pilex', 'Hadjod', 'Liv.52 Sugar Free', 'Vasaka', 'Probe Journal', 'Public Awareness Video',

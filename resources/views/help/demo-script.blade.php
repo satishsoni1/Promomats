@@ -24,7 +24,7 @@
                 <h3 class="text-lg font-semibold text-gray-900 mb-3">Login Credentials</h3>
                 <p class="text-sm text-gray-500 mb-3">
                     Password for every demo account: <code class="bg-gray-100 px-1.5 py-0.5 rounded text-brand-700 font-mono">{{ $demoPassword }}</code>
-                    &nbsp;&middot;&nbsp; Admin: <code class="bg-gray-100 px-1.5 py-0.5 rounded font-mono">admin@example.com</code> / <code class="bg-gray-100 px-1.5 py-0.5 rounded font-mono">ChangeMe123!</code>
+                    &nbsp;&middot;&nbsp; Admin: <code class="bg-gray-100 px-1.5 py-0.5 rounded font-mono">admin@globalspace.in</code> / <code class="bg-gray-100 px-1.5 py-0.5 rounded font-mono">welcome</code>
                 </p>
                 <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">

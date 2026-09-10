@@ -24,9 +24,21 @@
                         <x-input-error :messages="$errors->get('code')" class="mt-2" />
                     </div>
 
-                    <div>
-                        <x-input-label for="applies_to_category" value="Applies to Category" />
-                        <x-text-input id="applies_to_category" name="applies_to_category" class="mt-1 block w-full" :value="old('applies_to_category')" />
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <x-input-label for="applies_to_category" value="Applies to Category" />
+                            <x-text-input id="applies_to_category" name="applies_to_category" class="mt-1 block w-full" :value="old('applies_to_category')" />
+                        </div>
+                        <div>
+                            <x-input-label for="department" value="Department" />
+                            @if (! empty($departmentScope))
+                                <x-text-input id="department" name="department" class="mt-1 block w-full bg-gray-50" :value="$departmentScope" readonly />
+                                <p class="mt-1 text-xs text-gray-500">Scoped to your department.</p>
+                            @else
+                                <x-text-input id="department" name="department" class="mt-1 block w-full" :value="old('department')" placeholder="Leave blank for a shared workflow" />
+                            @endif
+                            <x-input-error :messages="$errors->get('department')" class="mt-2" />
+                        </div>
                     </div>
 
                     <div>
@@ -45,6 +57,16 @@
                                 </label>
                             @endforeach
                         </div>
+                    </div>
+
+                    <div>
+                        <label class="flex items-start gap-3 text-sm">
+                            <input type="checkbox" name="owner_can_customize_workflow" value="1" @checked(old('owner_can_customize_workflow')) class="mt-0.5 rounded border-gray-300 text-brand-600 focus:ring-brand-500">
+                            <span>
+                                <span class="font-medium text-gray-800">Let the document owner pick approvers at upload</span>
+                                <span class="block text-xs text-gray-500 mt-0.5">The owner can narrow a stage's candidate people down to one named person on the upload form. Can be changed later on the edit screen.</span>
+                            </span>
+                        </label>
                     </div>
 
                     <div class="flex items-center gap-4">

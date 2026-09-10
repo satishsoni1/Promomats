@@ -88,4 +88,21 @@ class WorkflowStage extends Model
     {
         return app(\App\Services\Workflow\ConditionEvaluator::class)->evaluate($this->condition_json, $document);
     }
+
+    /**
+     * Every user this stage's configured approver rules currently resolve to (roles
+     * expanded to their holders, named users as-is), de-duplicated. This is the
+     * candidate pool the document owner may narrow down when a template has
+     * owner_can_customize_workflow = true - a per-document pick outside this set is
+     * rejected (see DocumentController::store()).
+     *
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    public function candidateUserIds()
+    {
+        return collect($this->approvers->isNotEmpty() ? $this->approvers : $this->approvers()->get())
+            ->flatMap(fn (WorkflowStageApprover $approver) => $approver->resolveUserIds())
+            ->unique()
+            ->values();
+    }
 }

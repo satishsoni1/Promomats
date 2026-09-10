@@ -12,42 +12,84 @@ use Illuminate\Support\Facades\DB;
 
 class WorkflowTemplateController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $templates = WorkflowTemplate::withCount('stages')->latest()->get();
-        return view('admin.workflows.index', compact('templates'));
+        $scope = $request->user()->adminDepartmentScope();
+
+        $templates = WorkflowTemplate::shared()
+            ->when($scope, fn ($q) => $q->where('department', $scope))
+            ->withCount('stages')
+            ->latest()
+            ->get();
+
+        return view('admin.workflows.index', compact('templates'))
+            ->with('departmentScope', $scope);
     }
 
-    public function create()
+    public function create(Request $request)
     {
-        return view('admin.workflows.create');
+        return view('admin.workflows.create')
+            ->with('departmentScope', $request->user()->adminDepartmentScope());
     }
 
     public function store(Request $request)
     {
+        $scope = $request->user()->adminDepartmentScope();
+
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'code' => ['required', 'string', 'max:50', 'unique:workflow_templates,code'],
             'description' => ['nullable', 'string'],
             'applies_to_category' => ['nullable', 'string', 'max:120'],
+            'department' => $scope
+                ? ['required', 'string', \Illuminate\Validation\Rule::in([$scope])]
+                : ['nullable', 'string', 'max:120'],
             'target_audiences' => ['nullable', 'array'],
             'target_audiences.*' => ['string', 'in:' . implode(',', array_keys(\App\Support\TargetAudience::LABELS))],
+            'owner_can_customize_workflow' => ['sometimes', 'boolean'],
         ]);
 
-        $template = WorkflowTemplate::create($validated + ['created_by' => $request->user()->id]);
+        $template = WorkflowTemplate::create($validated + [
+            'department' => $scope,
+            'created_by' => $request->user()->id,
+            'owner_can_customize_workflow' => $request->boolean('owner_can_customize_workflow'),
+        ]);
 
         return redirect()->route('admin.workflows.edit', $template)->with('status', 'Workflow created. Now add stages.');
     }
 
-    public function edit(WorkflowTemplate $workflow)
+    public function edit(Request $request, WorkflowTemplate $workflow)
     {
+        $this->assertReach($request, $workflow);
+
         $workflow->load('stages.approvers.role', 'stages.transitions');
         $roles = Role::orderBy('name')->get();
         return view('admin.workflows.edit', compact('workflow', 'roles'));
     }
 
+    /**
+     * Template-level settings that are safe to change even on a locked template
+     * (they don't rewrite any in-flight document's path) - currently just whether
+     * a document owner may pick specific approvers per stage at upload time.
+     */
+    public function updateSettings(Request $request, WorkflowTemplate $workflow)
+    {
+        $this->assertReach($request, $workflow);
+
+        $validated = $request->validate([
+            'owner_can_customize_workflow' => ['sometimes', 'boolean'],
+        ]);
+
+        $workflow->update([
+            'owner_can_customize_workflow' => (bool) ($validated['owner_can_customize_workflow'] ?? false),
+        ]);
+
+        return back()->with('status', 'Workflow settings saved.');
+    }
+
     public function addStage(Request $request, WorkflowTemplate $workflow)
     {
+        $this->assertReach($request, $workflow);
         $this->assertNotLocked($workflow);
 
         $validated = $request->validate([
@@ -108,6 +150,7 @@ class WorkflowTemplateController extends Controller
      */
     public function setTransition(Request $request, WorkflowStage $stage)
     {
+        $this->assertReach($request, $stage->template);
         $this->assertNotLocked($stage->template);
 
         $validated = $request->validate([
@@ -131,6 +174,7 @@ class WorkflowTemplateController extends Controller
 
     public function reorderStages(Request $request, WorkflowTemplate $workflow)
     {
+        $this->assertReach($request, $workflow);
         $this->assertNotLocked($workflow);
 
         $validated = $request->validate([
@@ -154,6 +198,8 @@ class WorkflowTemplateController extends Controller
      */
     public function newVersion(Request $request, WorkflowTemplate $workflow)
     {
+        $this->assertReach($request, $workflow);
+
         $newTemplate = $workflow->createNewVersion($request->user());
 
         return redirect()->route('admin.workflows.edit', $newTemplate)
@@ -169,5 +215,14 @@ class WorkflowTemplateController extends Controller
     protected function assertNotLocked(WorkflowTemplate $workflow): void
     {
         abort_if($workflow->isLocked(), 422, "\"{$workflow->name}\" (v{$workflow->version}) is locked - it's already in use by at least one document. Create a new version to make changes.");
+    }
+
+    /**
+     * A department admin may only touch workflows tagged to their own department;
+     * a global admin may touch any (including department-less shared templates).
+     */
+    protected function assertReach(Request $request, WorkflowTemplate $workflow): void
+    {
+        abort_unless($request->user()->adminCanReachDepartment($workflow->department), 403, 'This workflow is outside your department.');
     }
 }

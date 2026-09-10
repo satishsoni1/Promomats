@@ -33,8 +33,15 @@ class AuthServiceProvider extends ServiceProvider
     {
         $this->registerPolicies();
 
+        // Global, unscoped admin - system settings, roles, brands, claims, etc.
         Gate::define('access-admin', function ($user) {
-            return $user->hasRole('admin');
+            return $user->isGlobalAdmin();
+        });
+
+        // Can open the /admin area: a global admin, or a department admin (whose
+        // controllers then scope everything to $user->adminDepartmentScope()).
+        Gate::define('access-admin-area', function ($user) {
+            return $user->canAdminister();
         });
     }
 }

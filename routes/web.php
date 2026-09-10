@@ -108,6 +108,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/documents/{document}/pdf-editor', [PdfEditController::class, 'edit'])->name('documents.pdf-editor.edit');
     Route::post('/documents/{document}/pdf-edits', [PdfEditController::class, 'store'])->name('documents.pdf-edits.store');
     Route::post('/documents/{document}/status', [DocumentController::class, 'updateStatus'])->name('documents.status.update');
+    Route::post('/documents/{document}/editing-access', [DocumentController::class, 'updateEditingAccess'])->name('documents.editing-access.update');
     Route::post('/documents/{document}/project', [DocumentController::class, 'updateProject'])->name('documents.project.update');
     Route::post('/documents/{document}/cycle', [DocumentController::class, 'updateCycle'])->name('documents.cycle.update');
     Route::get('/documents/{document}/history-report', [DocumentController::class, 'historyReport'])->name('documents.history-report');
@@ -159,50 +160,13 @@ Route::middleware(['auth'])->group(function () {
         return back();
     })->name('notifications.read');
 
-    // --- Admin area: gated by the 'access-admin' gate defined in AuthServiceProvider ---
-    Route::middleware(['can:access-admin'])->prefix('admin')->name('admin.')->group(function () {
+    // --- Admin area ---
+    // Outer gate 'access-admin-area': a global admin OR a department admin. The
+    // department-capable controllers below (Users, Workflows, Workflow Rules,
+    // Dashboards) scope every query to $user->adminDepartmentScope(). Everything in
+    // the inner 'access-admin' group stays global-admin only.
+    Route::middleware(['can:access-admin-area'])->prefix('admin')->name('admin.')->group(function () {
         Route::get('/dashboards', [AdminDashboardController::class, 'index'])->name('dashboards.index');
-
-        Route::get('/mail-settings', [MailSettingController::class, 'index'])->name('mail-settings.index');
-        Route::put('/mail-settings', [MailSettingController::class, 'update'])->name('mail-settings.update');
-        Route::post('/mail-settings/test', [MailSettingController::class, 'sendTest'])->name('mail-settings.test');
-
-        Route::get('/ai-settings', [AiSettingController::class, 'index'])->name('ai-settings.index');
-        Route::put('/ai-settings', [AiSettingController::class, 'update'])->name('ai-settings.update');
-        Route::post('/ai-settings/test', [AiSettingController::class, 'testConnection'])->name('ai-settings.test');
-
-        Route::get('/archiving-settings', [ArchivingSettingController::class, 'index'])->name('archiving-settings.index');
-        Route::put('/archiving-settings', [ArchivingSettingController::class, 'update'])->name('archiving-settings.update');
-
-        Route::get('/cold-storage-settings', [ColdStorageSettingController::class, 'index'])->name('cold-storage-settings.index');
-        Route::put('/cold-storage-settings', [ColdStorageSettingController::class, 'update'])->name('cold-storage-settings.update');
-        Route::post('/cold-storage-settings/test', [ColdStorageSettingController::class, 'test'])->name('cold-storage-settings.test');
-
-        Route::get('/retrieval-requests', [AdminRetrievalRequestController::class, 'index'])->name('retrieval-requests.index');
-        Route::post('/retrieval-requests/{retrievalRequest}/process', [AdminRetrievalRequestController::class, 'process'])->name('retrieval-requests.process');
-
-        Route::get('/audit-logs', [AuditLogController::class, 'index'])->name('audit-logs.index');
-
-        Route::get('/claims', [ClaimController::class, 'index'])->name('claims.index');
-        Route::get('/claims/create', [ClaimController::class, 'create'])->name('claims.create');
-        Route::post('/claims', [ClaimController::class, 'store'])->name('claims.store');
-        Route::get('/claims/{claim}', [ClaimController::class, 'show'])->name('claims.show');
-        Route::get('/claims/{claim}/edit', [ClaimController::class, 'edit'])->name('claims.edit');
-        Route::put('/claims/{claim}', [ClaimController::class, 'update'])->name('claims.update');
-        Route::delete('/claims/{claim}', [ClaimController::class, 'destroy'])->name('claims.destroy');
-        Route::post('/claims/{claim}/references', [ReferenceAttachmentController::class, 'storeForClaim'])->name('claims.references.store');
-        Route::delete('/claims/{claim}/references/{reference}', [ReferenceAttachmentController::class, 'destroyForClaim'])->name('claims.references.destroy');
-
-        Route::get('/claim-candidates', [ClaimCandidateController::class, 'index'])->name('claim-candidates.index');
-        Route::post('/claim-candidates/{candidate}/accept', [ClaimCandidateController::class, 'accept'])->name('claim-candidates.accept');
-        Route::post('/claim-candidates/{candidate}/reject', [ClaimCandidateController::class, 'reject'])->name('claim-candidates.reject');
-
-        Route::get('/content-modules', [ContentModuleController::class, 'index'])->name('content-modules.index');
-        Route::get('/content-modules/create', [ContentModuleController::class, 'create'])->name('content-modules.create');
-        Route::post('/content-modules', [ContentModuleController::class, 'store'])->name('content-modules.store');
-        Route::get('/content-modules/{contentModule}/edit', [ContentModuleController::class, 'edit'])->name('content-modules.edit');
-        Route::put('/content-modules/{contentModule}', [ContentModuleController::class, 'update'])->name('content-modules.update');
-        Route::delete('/content-modules/{contentModule}', [ContentModuleController::class, 'destroy'])->name('content-modules.destroy');
 
         Route::get('/users', [UserController::class, 'index'])->name('users.index');
         Route::get('/users/create', [UserController::class, 'create'])->name('users.create');
@@ -210,32 +174,77 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/users/{user}/roles', [UserController::class, 'updateRoles'])->name('users.roles.update');
         Route::post('/users/{user}/toggle-active', [UserController::class, 'toggleActive'])->name('users.toggle-active');
 
-        Route::get('/roles', [RoleController::class, 'index'])->name('roles.index');
-        Route::get('/roles/create', [RoleController::class, 'create'])->name('roles.create');
-        Route::post('/roles', [RoleController::class, 'store'])->name('roles.store');
-        Route::put('/roles/{role}', [RoleController::class, 'update'])->name('roles.update');
-        Route::delete('/roles/{role}', [RoleController::class, 'destroy'])->name('roles.destroy');
-
         Route::get('/workflows', [WorkflowTemplateController::class, 'index'])->name('workflows.index');
         Route::get('/workflows/create', [WorkflowTemplateController::class, 'create'])->name('workflows.create');
         Route::post('/workflows', [WorkflowTemplateController::class, 'store'])->name('workflows.store');
         Route::get('/workflows/{workflow}/edit', [WorkflowTemplateController::class, 'edit'])->name('workflows.edit');
+        Route::post('/workflows/{workflow}/settings', [WorkflowTemplateController::class, 'updateSettings'])->name('workflows.settings.update');
         Route::post('/workflows/{workflow}/stages', [WorkflowTemplateController::class, 'addStage'])->name('workflows.stages.add');
         Route::post('/workflows/{workflow}/stages/reorder', [WorkflowTemplateController::class, 'reorderStages'])->name('workflows.stages.reorder');
         Route::post('/workflow-stages/{stage}/transitions', [WorkflowTemplateController::class, 'setTransition'])->name('workflows.stages.transitions.set');
         Route::post('/workflows/{workflow}/new-version', [WorkflowTemplateController::class, 'newVersion'])->name('workflows.new-version');
 
-        Route::get('/brands', [BrandController::class, 'index'])->name('brands.index');
-        Route::post('/brands', [BrandController::class, 'store'])->name('brands.store');
-        Route::post('/brands/{brand}/toggle-status', [BrandController::class, 'toggleStatus'])->name('brands.toggle-status');
-
-        Route::get('/document-types', [DocumentTypeController::class, 'index'])->name('document-types.index');
-        Route::post('/document-types', [DocumentTypeController::class, 'store'])->name('document-types.store');
-        Route::post('/document-types/{documentType}/toggle-status', [DocumentTypeController::class, 'toggleStatus'])->name('document-types.toggle-status');
-
         Route::get('/workflow-rules', [WorkflowRuleController::class, 'index'])->name('workflow-rules.index');
         Route::post('/workflow-rules', [WorkflowRuleController::class, 'store'])->name('workflow-rules.store');
         Route::delete('/workflow-rules/{workflowRule}', [WorkflowRuleController::class, 'destroy'])->name('workflow-rules.destroy');
+
+        // --- Global-admin only ---
+        Route::middleware(['can:access-admin'])->group(function () {
+            Route::get('/mail-settings', [MailSettingController::class, 'index'])->name('mail-settings.index');
+            Route::put('/mail-settings', [MailSettingController::class, 'update'])->name('mail-settings.update');
+            Route::post('/mail-settings/test', [MailSettingController::class, 'sendTest'])->name('mail-settings.test');
+
+            Route::get('/ai-settings', [AiSettingController::class, 'index'])->name('ai-settings.index');
+            Route::put('/ai-settings', [AiSettingController::class, 'update'])->name('ai-settings.update');
+            Route::post('/ai-settings/test', [AiSettingController::class, 'testConnection'])->name('ai-settings.test');
+
+            Route::get('/archiving-settings', [ArchivingSettingController::class, 'index'])->name('archiving-settings.index');
+            Route::put('/archiving-settings', [ArchivingSettingController::class, 'update'])->name('archiving-settings.update');
+
+            Route::get('/cold-storage-settings', [ColdStorageSettingController::class, 'index'])->name('cold-storage-settings.index');
+            Route::put('/cold-storage-settings', [ColdStorageSettingController::class, 'update'])->name('cold-storage-settings.update');
+            Route::post('/cold-storage-settings/test', [ColdStorageSettingController::class, 'test'])->name('cold-storage-settings.test');
+
+            Route::get('/retrieval-requests', [AdminRetrievalRequestController::class, 'index'])->name('retrieval-requests.index');
+            Route::post('/retrieval-requests/{retrievalRequest}/process', [AdminRetrievalRequestController::class, 'process'])->name('retrieval-requests.process');
+
+            Route::get('/audit-logs', [AuditLogController::class, 'index'])->name('audit-logs.index');
+
+            Route::get('/claims', [ClaimController::class, 'index'])->name('claims.index');
+            Route::get('/claims/create', [ClaimController::class, 'create'])->name('claims.create');
+            Route::post('/claims', [ClaimController::class, 'store'])->name('claims.store');
+            Route::get('/claims/{claim}', [ClaimController::class, 'show'])->name('claims.show');
+            Route::get('/claims/{claim}/edit', [ClaimController::class, 'edit'])->name('claims.edit');
+            Route::put('/claims/{claim}', [ClaimController::class, 'update'])->name('claims.update');
+            Route::delete('/claims/{claim}', [ClaimController::class, 'destroy'])->name('claims.destroy');
+            Route::post('/claims/{claim}/references', [ReferenceAttachmentController::class, 'storeForClaim'])->name('claims.references.store');
+            Route::delete('/claims/{claim}/references/{reference}', [ReferenceAttachmentController::class, 'destroyForClaim'])->name('claims.references.destroy');
+
+            Route::get('/claim-candidates', [ClaimCandidateController::class, 'index'])->name('claim-candidates.index');
+            Route::post('/claim-candidates/{candidate}/accept', [ClaimCandidateController::class, 'accept'])->name('claim-candidates.accept');
+            Route::post('/claim-candidates/{candidate}/reject', [ClaimCandidateController::class, 'reject'])->name('claim-candidates.reject');
+
+            Route::get('/content-modules', [ContentModuleController::class, 'index'])->name('content-modules.index');
+            Route::get('/content-modules/create', [ContentModuleController::class, 'create'])->name('content-modules.create');
+            Route::post('/content-modules', [ContentModuleController::class, 'store'])->name('content-modules.store');
+            Route::get('/content-modules/{contentModule}/edit', [ContentModuleController::class, 'edit'])->name('content-modules.edit');
+            Route::put('/content-modules/{contentModule}', [ContentModuleController::class, 'update'])->name('content-modules.update');
+            Route::delete('/content-modules/{contentModule}', [ContentModuleController::class, 'destroy'])->name('content-modules.destroy');
+
+            Route::get('/roles', [RoleController::class, 'index'])->name('roles.index');
+            Route::get('/roles/create', [RoleController::class, 'create'])->name('roles.create');
+            Route::post('/roles', [RoleController::class, 'store'])->name('roles.store');
+            Route::put('/roles/{role}', [RoleController::class, 'update'])->name('roles.update');
+            Route::delete('/roles/{role}', [RoleController::class, 'destroy'])->name('roles.destroy');
+
+            Route::get('/brands', [BrandController::class, 'index'])->name('brands.index');
+            Route::post('/brands', [BrandController::class, 'store'])->name('brands.store');
+            Route::post('/brands/{brand}/toggle-status', [BrandController::class, 'toggleStatus'])->name('brands.toggle-status');
+
+            Route::get('/document-types', [DocumentTypeController::class, 'index'])->name('document-types.index');
+            Route::post('/document-types', [DocumentTypeController::class, 'store'])->name('document-types.store');
+            Route::post('/document-types/{documentType}/toggle-status', [DocumentTypeController::class, 'toggleStatus'])->name('document-types.toggle-status');
+        });
     });
 });
 

@@ -12,6 +12,7 @@ class Document extends Model
 
     protected $fillable = [
         'title', 'description', 'category', 'brand_id', 'document_type_id', 'products', 'countries', 'target_audience', 'reference_no', 'owner_id', 'workflow_template_id',
+        'allow_department_editing',
         'project_id', 'cycle_id', 'status', 'start_date', 'expiry_date', 'aging_warning_days',
         'is_expired', 'is_aging_flagged', 'current_version_id',
         'legal_hold', 'legal_hold_reason', 'legal_hold_set_by', 'legal_hold_set_at',
@@ -27,6 +28,7 @@ class Document extends Model
         'countries' => 'array',
         'legal_hold' => 'boolean',
         'legal_hold_set_at' => 'datetime',
+        'allow_department_editing' => 'boolean',
     ];
 
     protected static function booted(): void
@@ -151,6 +153,51 @@ class Document extends Model
     public function approvalActions()
     {
         return $this->hasMany(DocumentApprovalAction::class)->orderByDesc('acted_at');
+    }
+
+    /**
+     * The document owner's per-stage "send this stage to these named people" picks,
+     * made at upload time when the workflow template allows it (see
+     * WorkflowTemplate::$owner_can_customize_workflow). Empty for a document that
+     * just uses its template's approver pools unchanged.
+     */
+    public function stageApproverSelections()
+    {
+        return $this->hasMany(DocumentStageApproverSelection::class);
+    }
+
+    /**
+     * User IDs this document's owner pinned to the given stage, or null when they
+     * made no pick for it (in which case the engine falls back to the stage's own
+     * role/user approver rules). Never returns an empty collection - "no pick" and
+     * "picked nobody" are the same thing here.
+     *
+     * @return \Illuminate\Support\Collection<int, int>|null
+     */
+    public function approverIdsForStage(WorkflowStage $stage)
+    {
+        $ids = ($this->relationLoaded('stageApproverSelections')
+                ? $this->stageApproverSelections
+                : $this->stageApproverSelections())
+            ->where('workflow_stage_id', $stage->id)
+            ->pluck('user_id')
+            ->unique()
+            ->values();
+
+        return $ids->isNotEmpty() ? $ids : null;
+    }
+
+    /**
+     * True when this document's owner has switched on "open editing" and $user is in
+     * the same department as the owner - the extra branch DocumentPolicy adds on top
+     * of owner / admin / Agency. Deliberately department-of-the-owner, not of the
+     * document (documents carry no department of their own).
+     */
+    public function openToDepartmentEditor(User $user): bool
+    {
+        return $this->allow_department_editing
+            && filled($user->department)
+            && $user->department === ($this->relationLoaded('owner') ? $this->owner?->department : $this->owner()->value('department'));
     }
 
     public function watchers()

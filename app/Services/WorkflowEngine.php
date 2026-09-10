@@ -128,10 +128,7 @@ class WorkflowEngine
                 ['status' => 'open', 'decision' => null, 'entered_at' => now(), 'resolved_at' => null]
             );
 
-            $userIds = collect($memberStage->approvers()->get())
-                ->flatMap(fn ($approver) => $approver->resolveUserIds())
-                ->unique()
-                ->values();
+            $userIds = $this->resolveStageApprovers($instance->document, $memberStage);
 
             if ($userIds->isEmpty()) {
                 throw ValidationException::withMessages([
@@ -160,6 +157,29 @@ class WorkflowEngine
                 $this->completeInstance($instance, 'approved');
             }
         }
+    }
+
+    /**
+     * The concrete approver user IDs for a stage on a specific document: the
+     * document owner's per-stage picks if they made any at upload time (see
+     * DocumentStageApproverSelection), otherwise the stage's own role/user
+     * approver rules resolved live. Every pick was already validated against the
+     * stage's candidate pool when it was saved, so this trusts it as-is.
+     *
+     * @return \Illuminate\Support\Collection<int, int>
+     */
+    protected function resolveStageApprovers(Document $document, WorkflowStage $stage): Collection
+    {
+        $picked = $document->approverIdsForStage($stage);
+
+        if ($picked !== null) {
+            return $picked;
+        }
+
+        return collect($stage->approvers()->get())
+            ->flatMap(fn ($approver) => $approver->resolveUserIds())
+            ->unique()
+            ->values();
     }
 
     /**
@@ -280,10 +300,7 @@ class WorkflowEngine
      */
     protected function computeMajorityOutcome(DocumentWorkflowInstance $instance, WorkflowStage $stage): ?string
     {
-        $totalApprovers = collect($stage->approvers()->get())
-            ->flatMap(fn ($approver) => $approver->resolveUserIds())
-            ->unique()
-            ->count();
+        $totalApprovers = $this->resolveStageApprovers($instance->document, $stage)->count();
 
         $quorum = $stage->requiredQuorum($totalApprovers);
 

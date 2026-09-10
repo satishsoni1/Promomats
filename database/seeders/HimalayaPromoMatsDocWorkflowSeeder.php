@@ -33,7 +33,7 @@ class HimalayaPromoMatsDocWorkflowSeeder extends Seeder
 
     public function run(): void
     {
-        $admin = User::where('email', 'admin@example.com')->first() ?? User::first();
+        $admin = User::where('email', 'admin@globalspace.in')->first() ?? User::first();
         $userId = fn (string $email) => User::where('email', $email)->value('id');
 
         $jalba = $userId('jalba.rc@himalayawellness.com');

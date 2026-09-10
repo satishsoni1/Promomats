@@ -20,6 +20,7 @@
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Name</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Code</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Applies To</th>
+                            <th class="px-4 py-3 text-left font-medium text-gray-500">Department</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Stages</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                             <th class="px-4 py-3"></th>
@@ -31,6 +32,7 @@
                                 <td class="px-4 py-3 font-medium text-gray-900">{{ $template->name }}</td>
                                 <td class="px-4 py-3 text-gray-600 font-mono text-xs">{{ $template->code }}</td>
                                 <td class="px-4 py-3 text-gray-600">{{ $template->applies_to_category ?? '—' }}</td>
+                                <td class="px-4 py-3 text-gray-600">{{ $template->department ?? '— shared —' }}</td>
                                 <td class="px-4 py-3 text-gray-600">{{ $template->stages_count }}</td>
                                 <td class="px-4 py-3">
                                     <span class="text-xs px-2 py-0.5 rounded-full {{ $template->is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500' }}">
