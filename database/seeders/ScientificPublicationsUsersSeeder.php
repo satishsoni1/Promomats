@@ -30,9 +30,10 @@ use Illuminate\Support\Str;
  * them for demo/UAT and is forced to set a real password on first login). Switch to
  * an unusable random hash for production.
  *
- * NOTE: the brief lists Shruthi V Kumar's address on the "himalayawell.com"
- * domain while everyone else is "himalayawellness.com" - kept exactly as written
- * so it matches the source of truth; fix it here if that turns out to be a typo.
+ * NOTE: the brief listed Shruthi V Kumar's address on the "himalayawell.com"
+ * domain while everyone else is "himalayawellness.com". Confirmed a typo - her
+ * actual emails (RE: VODO approval system, 2026-09-18) come from
+ * shruthi.kumar@himalayawellness.com, which is what's seeded below.
  */
 class ScientificPublicationsUsersSeeder extends Seeder
 {
@@ -59,7 +60,7 @@ class ScientificPublicationsUsersSeeder extends Seeder
         $people = [
             ['name' => 'Dr Anna Chackanackuzhy', 'email' => 'dr.anna.c@himalayawellness.com', 'dept' => 'Scientific Publications', 'roles' => ['Content Developer', 'Project Lead']],
             ['name' => 'Dr Priyanka R', 'email' => 'dr.priyanka.r@himalayawellness.com', 'dept' => 'Scientific Publications', 'roles' => ['Content Developer', 'Project Lead']],
-            ['name' => 'Shruthi V Kumar', 'email' => 'shruthi.kumar@himalayawell.com', 'dept' => 'Scientific Publications', 'roles' => ['Content Reviewer', 'Project Lead']],
+            ['name' => 'Shruthi V Kumar', 'email' => 'shruthi.kumar@himalayawellness.com', 'dept' => 'Scientific Publications', 'roles' => ['Content Reviewer', 'Project Lead']],
             ['name' => 'Dr Chaitra G', 'email' => 'dr.chaitra.g@himalayawellness.com', 'dept' => 'Scientific Publications', 'roles' => ['Content Reviewer', 'Project Lead']],
             ['name' => 'Harika GS', 'email' => 'harika.gs@himalayawellness.com', 'dept' => 'Scientific Publications', 'roles' => ['Copy Editor', 'Proofing Editor', 'Project Lead']],
             ['name' => 'Shruthi Murali', 'email' => 'shruthi.murali@himalayawellness.com', 'dept' => 'Scientific Publications', 'roles' => ['Copy Editor', 'Proofing Editor', 'Project Lead']],

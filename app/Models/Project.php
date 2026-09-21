@@ -73,10 +73,13 @@ class Project extends Model
     /**
      * Document counts grouped into the buckets above, keyed by bucket, defaulting
      * every bucket to 0 so the dashboard never has to guard against a missing key.
+     * Pass a cycle to scope the breakdown to just that round instead of the
+     * project's whole lifetime (see currentCycle()).
      */
-    public function statusBreakdown(): array
+    public function statusBreakdown(?ProjectCycle $cycle = null): array
     {
-        $counts = $this->documents()->selectRaw('status, count(*) as c')->groupBy('status')->pluck('c', 'status');
+        $query = $cycle ? $cycle->documents() : $this->documents();
+        $counts = $query->selectRaw('status, count(*) as c')->groupBy('status')->pluck('c', 'status');
 
         $breakdown = array_fill_keys(array_keys(self::STATUS_BUCKETS), 0);
         foreach (self::STATUS_BUCKETS as $bucket => $statuses) {
@@ -86,5 +89,19 @@ class Project extends Model
         }
 
         return $breakdown;
+    }
+
+    /**
+     * The round the project dashboard should default to for teams running repeat
+     * issues/waves through the same project (e.g. Scientific Publications' 3
+     * issues/year per publication) - the most recently started cycle still marked
+     * active, falling back to the most recently started cycle of any status. Null
+     * when the project has no cycles yet, in which case the dashboard shows the
+     * project's whole lifetime as it always has.
+     */
+    public function currentCycle(): ?ProjectCycle
+    {
+        return $this->cycles()->where('status', 'active')->orderByDesc('start_date')->first()
+            ?? $this->cycles()->orderByDesc('start_date')->first();
     }
 }

@@ -39,7 +39,10 @@ class ScientificPublicationsWorkflow2Seeder extends Seeder
         $template = WorkflowTemplate::firstOrCreate(
             ['code' => 'SCIPUB_WF2'],
             [
-                'name' => 'Scientific Publications - Workflow 2 (Line Manager)',
+                // Client-facing label per Shruthi Kumar's review (RE: VODO approval
+                // system, 2026-09-18, item 2) - the Dashboard's workflow list should
+                // read "Proof Generation" for this one, not "Workflow 2".
+                'name' => 'Scientific Publications - Proof Generation',
                 'description' => 'Document Owner -> Line Manager approval -> Approved for Production -> Approved for Distribution.',
                 'applies_to_category' => 'Scientific Publication (Proof)',
                 'target_audiences' => ['hcp'],
@@ -50,6 +53,7 @@ class ScientificPublicationsWorkflow2Seeder extends Seeder
         );
 
         $template->update([
+            'name' => 'Scientific Publications - Proof Generation',
             'target_audiences' => ['hcp'],
             'owner_can_customize_workflow' => true,
         ]);

@@ -119,7 +119,10 @@ class ReferenceAttachmentController extends Controller
     protected function validateUpload(Request $request): array
     {
         return $request->validate([
-            'title' => ['required', 'string', 'max:255'],
+            // Optional: teams attaching many references (5+) at once found typing a
+            // title for each one tedious. Left blank, store() falls back to the
+            // uploaded file's own name.
+            'title' => ['nullable', 'string', 'max:255'],
             'category' => ['nullable', 'string', 'max:120'],
             'file' => ['required', 'file', 'max:512000'],
         ]);
@@ -134,7 +137,7 @@ class ReferenceAttachmentController extends Controller
         $path = $file->storeAs($directory, $storedName, $disk);
 
         return $attachable->referenceAttachments()->create([
-            'title' => $validated['title'],
+            'title' => $validated['title'] ?: pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME),
             'category' => $validated['category'] ?? null,
             'disk' => $disk,
             'file_path' => $path,

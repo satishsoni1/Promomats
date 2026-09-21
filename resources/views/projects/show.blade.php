@@ -32,7 +32,20 @@
                 <div class="lg:col-span-2 space-y-6">
 
                     <div class="bg-white shadow-sm ring-1 ring-gray-900/5 rounded-lg p-6">
-                        <h3 class="text-lg font-semibold text-gray-900 mb-3">Status Overview</h3>
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-lg font-semibold text-gray-900">Status Overview</h3>
+                            @if ($project->cycles->isNotEmpty())
+                                <div class="flex items-center gap-2 text-xs">
+                                    @if ($selectedCycle)
+                                        <span class="px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 font-medium">{{ $selectedCycle->name }}</span>
+                                        <a href="{{ route('projects.show', $project) }}?cycle=all" class="text-brand-600 hover:underline">Show all issues</a>
+                                    @else
+                                        <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">All issues (lifetime)</span>
+                                        <a href="{{ route('projects.show', $project) }}" class="text-brand-600 hover:underline">Show current issue</a>
+                                    @endif
+                                </div>
+                            @endif
+                        </div>
                         @if ($total > 0)
                             <div class="flex h-3 rounded-full overflow-hidden bg-gray-100 mb-3">
                                 @foreach ($breakdown as $bucket => $count)
@@ -52,7 +65,12 @@
                     </div>
 
                     <div class="bg-white shadow-sm ring-1 ring-gray-900/5 rounded-lg p-6">
-                        <h3 class="text-lg font-semibold text-gray-900 mb-3">Documents ({{ $documents->total() }})</h3>
+                        <h3 class="text-lg font-semibold text-gray-900 mb-3">
+                            Documents ({{ $documents->total() }})
+                            @if ($selectedCycle)
+                                <span class="text-sm font-normal text-gray-400">— {{ $selectedCycle->name }}</span>
+                            @endif
+                        </h3>
                         <table class="min-w-full text-sm divide-y divide-gray-100">
                             <thead>
                                 <tr class="text-left text-gray-500">
@@ -146,7 +164,7 @@
 
                         <form id="upload-project-reference-form" method="POST" action="{{ route('projects.references.store', $project) }}" enctype="multipart/form-data" class="hidden mb-4 p-4 bg-gray-50 rounded-md space-y-3">
                             @csrf
-                            <input type="text" name="title" required placeholder="File title" class="block w-full text-sm border-gray-300 rounded-md">
+                            <input type="text" name="title" placeholder="File title (optional — defaults to the file name)" class="block w-full text-sm border-gray-300 rounded-md">
                             <input type="text" name="category" placeholder="Category (optional)" class="block w-full text-sm border-gray-300 rounded-md">
                             <input type="file" name="file" required class="block w-full text-sm">
                             <x-primary-button>Add to Project Library</x-primary-button>

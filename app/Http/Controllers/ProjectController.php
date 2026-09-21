@@ -93,12 +93,25 @@ class ProjectController extends Controller
     {
         $project->load(['lead', 'creator', 'referenceAttachments.uploader', 'cycles.creator']);
 
-        $documents = $project->documents()
+        // Teams running repeat issues/waves through one project (e.g. Scientific
+        // Publications' 3 issues/year per publication) want the dashboard to open
+        // on the current round, not a lifetime blend of every past issue - see
+        // Shruthi Kumar's review (RE: VODO approval system, 2026-09-18, item 8).
+        // ?cycle=all opts back into the lifetime view; ?cycle=<id> pins a specific
+        // past round; with no cycles configured yet, behaviour is unchanged.
+        $viewingAll = $request->query('cycle') === 'all';
+        $selectedCycle = $viewingAll
+            ? null
+            : ($request->filled('cycle')
+                ? $project->cycles->firstWhere('id', (int) $request->query('cycle'))
+                : $project->currentCycle());
+
+        $documents = ($selectedCycle ? $selectedCycle->documents() : $project->documents())
             ->with(['owner', 'currentVersion', 'cycle'])
             ->latest()
             ->paginate(20);
 
-        $breakdown = $project->statusBreakdown();
+        $breakdown = $project->statusBreakdown($selectedCycle);
         $users = User::where('is_active', true)->orderBy('name')->get(['id', 'name']);
 
         // Cycle count is always small (a handful of rounds per project, not
@@ -109,7 +122,7 @@ class ProjectController extends Controller
         $user = $request->user();
         $canManage = $user->id === $project->created_by || $user->id === $project->lead_id || $user->can('access-admin');
 
-        return view('projects.show', compact('project', 'documents', 'breakdown', 'users', 'canManage'));
+        return view('projects.show', compact('project', 'documents', 'breakdown', 'users', 'canManage', 'selectedCycle', 'viewingAll'));
     }
 
     public function edit(Project $project)

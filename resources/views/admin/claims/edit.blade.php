@@ -92,7 +92,7 @@
 
                 <form id="upload-claim-reference-form" method="POST" action="{{ route('admin.claims.references.store', $claim) }}" enctype="multipart/form-data" class="hidden mb-4 p-4 bg-gray-50 rounded-md space-y-3">
                     @csrf
-                    <input type="text" name="title" required placeholder="Reference title" class="block w-full text-sm border-gray-300 rounded-md">
+                    <input type="text" name="title" placeholder="Reference title (optional — defaults to the file name)" class="block w-full text-sm border-gray-300 rounded-md">
                     <input type="text" name="category" placeholder="Category (optional, e.g. Study, Certificate, Legal Template)" class="block w-full text-sm border-gray-300 rounded-md">
                     <input type="file" name="file" required class="block w-full text-sm">
                     <x-primary-button>Attach</x-primary-button>

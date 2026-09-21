@@ -41,7 +41,7 @@ class ScientificPublicationsWorkflow1Seeder extends Seeder
         $ids = [
             'anna' => $userId('dr.anna.c@himalayawellness.com'),
             'priyanka' => $userId('dr.priyanka.r@himalayawellness.com'),
-            'shruthiK' => $userId('shruthi.kumar@himalayawell.com'),
+            'shruthiK' => $userId('shruthi.kumar@himalayawellness.com'),
             'chaitra' => $userId('dr.chaitra.g@himalayawellness.com'),
             'harika' => $userId('harika.gs@himalayawellness.com'),
             'shruthiM' => $userId('shruthi.murali@himalayawellness.com'),
@@ -66,7 +66,10 @@ class ScientificPublicationsWorkflow1Seeder extends Seeder
         $template = WorkflowTemplate::firstOrCreate(
             ['code' => 'SCIPUB_WF1'],
             [
-                'name' => 'Scientific Publications - Workflow 1 (Full Proof Cycle)',
+                // Client-facing label per Shruthi Kumar's review (RE: VODO approval
+                // system, 2026-09-18, item 2) - the Dashboard's workflow list should
+                // read "Content Generation" for this one, not "Workflow 1".
+                'name' => 'Scientific Publications - Content Generation',
                 'description' => 'Content Review -> Copy Editing -> Proof Zero -> Proof One -> Proof Two (Project Lead || AGM) -> Proof Three (Project Lead || Proofreading) -> Proof Four review (Regulatory || Legal || Document Owner) -> Proof Four Feedback -> Proof Five -> Check Pre-MP -> Check MP / Approved for Distribution.',
                 'applies_to_category' => 'Scientific Publication (Word)',
                 'target_audiences' => ['hcp'],
@@ -77,6 +80,7 @@ class ScientificPublicationsWorkflow1Seeder extends Seeder
         );
 
         $template->update([
+            'name' => 'Scientific Publications - Content Generation',
             'target_audiences' => ['hcp'],
             'owner_can_customize_workflow' => true,
         ]);

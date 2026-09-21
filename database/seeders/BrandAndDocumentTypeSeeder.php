@@ -69,9 +69,31 @@ class BrandAndDocumentTypeSeeder extends Seeder
                 $this->rule($docWorkflow, $code, $admin);
             }
         }
+
+        // Scientific Publications uploads a Word source (Content Generation) or a
+        // PDF proof (Proof Generation) and must never fall through to the pharma
+        // PromoMats workflow above - that's exactly what happened to Shruthi Kumar's
+        // Evecare trial upload (RE: VODO approval system, 2026-09-18, item 5): no
+        // department-scoped rule existed, so the WORD-document-type wildcard rule
+        // (department = null, same priority) won and routed her into "Content
+        // Manager Brief Review" instead of "Content Review (Resource Selection)".
+        // These rules share priority 100 with the wildcard ones above; WorkflowRule::
+        // specificity() breaks the tie in favor of the more specific (department-set)
+        // rule, so they take over only for uploads made by a Scientific Publications
+        // department user - everyone else's WORD/PDF uploads are unaffected.
+        $sciPubWord = WorkflowTemplate::where('code', 'SCIPUB_WF1')->where('is_active', true)->first();
+        $sciPubProof = WorkflowTemplate::where('code', 'SCIPUB_WF2')->where('is_active', true)->first();
+
+        if ($sciPubWord) {
+            $this->rule($sciPubWord, 'WORD', $admin, department: 'Scientific Publications');
+        }
+
+        if ($sciPubProof) {
+            $this->rule($sciPubProof, 'PDF', $admin, department: 'Scientific Publications');
+        }
     }
 
-    protected function rule(WorkflowTemplate $template, string $documentTypeCode, ?User $admin): void
+    protected function rule(WorkflowTemplate $template, string $documentTypeCode, ?User $admin, ?string $department = null): void
     {
         $documentType = DocumentType::where('code', $documentTypeCode)->first();
         if (! $documentType) {
@@ -83,7 +105,7 @@ class BrandAndDocumentTypeSeeder extends Seeder
                 'workflow_template_id' => $template->id,
                 'brand_id' => null, // applies to every brand
                 'document_type_id' => $documentType->id,
-                'department' => null,
+                'department' => $department,
             ],
             ['priority' => 100, 'status' => 'active', 'created_by' => $admin?->id]
         );

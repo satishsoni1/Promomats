@@ -79,7 +79,7 @@
                 <input type="hidden" name="folder_id" value="{{ $folder?->id }}">
                 <p class="text-xs text-gray-500">Uploading into: <strong>{{ $folder?->name ?? 'Library (root)' }}</strong></p>
                 <div class="grid grid-cols-2 gap-3">
-                    <input type="text" name="title" required placeholder="File title" class="text-sm border-gray-300 rounded-md">
+                    <input type="text" name="title" placeholder="File title (optional — defaults to the file name)" class="text-sm border-gray-300 rounded-md">
                     <input type="text" name="category" placeholder="Category (optional)" class="text-sm border-gray-300 rounded-md">
                 </div>
                 <input type="file" name="file" required class="block w-full text-sm">

@@ -20,7 +20,7 @@ class LibraryFileController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'title' => ['required', 'string', 'max:255'],
+            'title' => ['nullable', 'string', 'max:255'],
             'category' => ['nullable', 'string', 'max:120'],
             'folder_id' => ['nullable', 'exists:library_folders,id'],
             'file' => ['required', 'file', 'max:512000'],
@@ -35,7 +35,7 @@ class LibraryFileController extends Controller
 
         ReferenceAttachment::create([
             'library_folder_id' => $folder,
-            'title' => $validated['title'],
+            'title' => $validated['title'] ?: pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME),
             'category' => $validated['category'] ?? null,
             'disk' => $disk,
             'file_path' => $path,
