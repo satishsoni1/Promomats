@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class WorkflowStage extends Model
 {
     protected $fillable = [
-        'workflow_template_id', 'sequence_no', 'name', 'code', 'parallel_group',
+        'workflow_template_id', 'sequence_no', 'name', 'code', 'stage_type', 'parallel_group',
         'approval_mode', 'quorum_count', 'condition_json', 'is_revision_stage', 'is_final_distribution_stage', 'sla_hours',
     ];
 
@@ -30,6 +30,15 @@ class WorkflowStage extends Model
     public function transitions()
     {
         return $this->hasMany(WorkflowTransition::class);
+    }
+
+    /**
+     * A drafting step (Content Manager / Content Creator draft) rather than a
+     * sign-off gate: the assignee submits the draft on, or sends it back.
+     */
+    public function isDraft(): bool
+    {
+        return $this->stage_type === 'draft';
     }
 
     public function transitionFor(string $decision): ?WorkflowTransition

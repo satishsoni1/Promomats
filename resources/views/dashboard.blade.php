@@ -131,7 +131,9 @@
                 <div class="bg-white shadow-sm ring-1 ring-gray-900/5 rounded-lg p-6">
                     <div class="flex items-center justify-between mb-4">
                         <h3 class="text-lg font-semibold text-gray-900">My Recent Documents</h3>
-                        <a href="{{ route('documents.create') }}" class="text-sm text-brand-600 hover:underline">+ Upload new</a>
+                        @can('create', \App\Models\Document::class)
+                            <a href="{{ route('documents.create') }}" class="text-sm text-brand-600 hover:underline">+ Upload new</a>
+                        @endcan
                     </div>
                     @forelse ($recentDocuments as $document)
                         <a href="{{ route('documents.show', $document) }}" class="block py-3 border-b last:border-b-0 border-gray-100 hover:bg-gray-50 -mx-2 px-2 rounded">

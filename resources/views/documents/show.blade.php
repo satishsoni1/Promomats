@@ -17,6 +17,19 @@
     $lastActionSeq = $document->approvalActions->first()?->stage?->sequence_no;
 
     $cardClass = 'bg-white rounded-xl border border-gray-200/80 p-6';
+
+    $user = auth()->user();
+    $canManageTasks = $user->can('manageTasks', $document);
+    $canUploadVersion = $user->can('uploadVersion', $document);
+    $openWorkTask = $document->workTasks->firstWhere('status', 'open');
+    $isParked = $document->status === 'approved_with_changes_pending';
+    $requirePassword = config('promomats.approvals.require_password');
+    $myStageIsDraft = $myAssignment?->stage?->isDraft();
+    $reassignOptions = $canManageTasks && $instance
+        ? \App\Models\User::with('roles')->where('is_active', true)->orderBy('name')->get(['id', 'name'])->filter(fn ($u) => $u->canRecordDecisions())
+        : collect();
+    $designTeam = ($canManageTasks || $user->isDesignTeam()) ? \App\Models\User::designTeam()->get(['id', 'name']) : collect();
+    $lastDecision = $document->approvalActions->first();
 @endphp
 <x-app-layout>
     <x-slot name="header">
@@ -93,7 +106,14 @@
             @if ($stages->isNotEmpty())
                 <div class="{{ $cardClass }} !p-4 overflow-x-auto">
                     <div class="flex items-center min-w-max">
-                        @foreach ($stages as $stage)
+                        @php $stageColumns = $stages->groupBy(fn ($s) => $s->parallel_group ?: 'solo-' . $s->id); @endphp
+                        @foreach ($stageColumns as $column)
+                            <div class="flex items-center {{ ! $loop->last ? 'flex-1' : '' }}">
+                            <div class="flex flex-col gap-1.5 px-2 {{ $column->count() > 1 ? 'border border-dashed border-brand-200 rounded-lg py-1.5' : '' }}">
+                            @if ($column->count() > 1)
+                                <span class="text-[9px] uppercase tracking-wider text-brand-600 text-center">in parallel</span>
+                            @endif
+                            @foreach ($column as $stage)
                             @php
                                 $state = 'upcoming';
                                 if ($isFullyApproved) {
@@ -102,35 +122,59 @@
                                     $state = $lastActionSeq && $stage->sequence_no <= $lastActionSeq ? 'rejected' : 'upcoming';
                                 } elseif ($openSeqs->contains($stage->sequence_no)) {
                                     $state = 'current';
+                                } elseif ($isParked && $instance && ($stage->parallel_group ? $stage->parallel_group === $instance->currentStage?->parallel_group : $stage->id === $instance->current_stage_id)) {
+                                    $state = 'returned';
                                 } elseif ($currentSeq && $stage->sequence_no < $currentSeq) {
+                                    $state = 'done';
+                                } elseif ($instance && $instance->stageRuns->where('workflow_stage_id', $stage->id)->where('status', 'resolved')->isNotEmpty()) {
                                     $state = 'done';
                                 }
                                 $pill = match ($state) {
                                     'done' => 'bg-brand-600 text-white',
                                     'current' => 'bg-accent-500 text-white ring-4 ring-accent-100',
                                     'rejected' => 'bg-red-500 text-white',
+                                    'returned' => 'bg-amber-400 text-white ring-4 ring-amber-100',
                                     default => 'bg-gray-200 text-gray-500',
                                 };
                                 $label = match ($state) {
                                     'done' => 'text-brand-700 font-medium',
                                     'current' => 'text-accent-700 font-semibold',
                                     'rejected' => 'text-red-600 font-medium',
+                                    'returned' => 'text-amber-700 font-semibold',
                                     default => 'text-gray-400',
                                 };
                             @endphp
-                            <div class="flex items-center {{ ! $loop->last ? 'flex-1' : '' }}">
-                                <div class="flex flex-col items-center gap-1 px-2">
-                                    <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold {{ $pill }}">
+                                <div class="flex items-center gap-1.5 {{ $column->count() > 1 ? '' : 'flex-col' }}">
+                                    <div class="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-xs font-bold {{ $pill }}" title="{{ $state === 'returned' ? 'With the task owner for revision' : '' }}">
                                         {{ $state === 'done' ? '✓' : $stage->sequence_no }}
                                     </div>
                                     <span class="text-[11px] whitespace-nowrap {{ $label }}">{{ $stage->name }}</span>
                                 </div>
-                                @if (! $loop->last)
-                                    <div class="flex-1 h-0.5 min-w-[2rem] {{ $state === 'done' ? 'bg-brand-600' : 'bg-gray-200' }}"></div>
-                                @endif
+                            @endforeach
+                            </div>
+                            @if (! $loop->last)
+                                <div class="flex-1 h-0.5 min-w-[2rem] {{ isset($state) && $state === 'done' ? 'bg-brand-600' : 'bg-gray-200' }}"></div>
+                            @endif
                             </div>
                         @endforeach
                     </div>
+                </div>
+            @endif
+
+            @if ($document->is_placeholder)
+                <div class="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900">
+                    <strong>Placeholder</strong> — waiting for the artwork.
+                    @if ($openWorkTask)
+                        With the Design Team{{ $openWorkTask->assignee ? ' (' . $openWorkTask->assignee->name . ')' : ', not yet assigned to a designer' }}{{ $openWorkTask->due_at ? ', due ' . $openWorkTask->due_at->format('d M Y, H:i') : '' }}.
+                    @endif
+                </div>
+            @elseif ($isParked)
+                <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    <strong>Waiting on {{ $openWorkTask ? 'the Design Team' . ($openWorkTask->assignee ? ' (' . $openWorkTask->assignee->name . ')' : '') : $document->owner?->name . ' (task owner)' }}</strong>
+                    to upload the revision{{ $lastDecision ? ' — ' . $lastDecision->decisionLabel() . ' by ' . $lastDecision->actor?->name . ' at ' . $lastDecision->stage?->name . ', ' . $lastDecision->acted_at?->diffForHumans() : '' }}.
+                    @if ($lastDecision?->decision === 'approved_with_changes' && ($document->workflowTemplate?->awc_resume ?? 'next_stage') === 'next_stage')
+                        Once it's uploaded it moves straight on to the next stage.
+                    @endif
                 </div>
             @endif
 
@@ -138,10 +182,12 @@
                 <!-- Left: details + versions + history -->
                 <div class="lg:col-span-2 space-y-6">
 
-                    @if ($document->currentVersion?->isPdf())
+                    @if ($document->currentVersion?->isPdf() || ($document->currentVersion?->isImage() && $document->currentVersion?->extension() !== 'svg'))
                         @include('documents.partials.pdf-viewer')
                     @elseif ($document->currentVersion?->isVideo())
                         @include('documents.partials.video-viewer')
+                    @elseif ($document->currentVersion?->isWordDocument())
+                        @include('documents.partials.word-viewer')
                     @elseif ($document->currentVersion?->isImage())
                         <div class="{{ $cardClass }}">
                             <div class="flex items-center justify-between mb-3">
@@ -163,6 +209,16 @@
                                     <x-avatar :name="$document->owner?->name" size="xs" />
                                     {{ $document->owner?->name }}
                                 </dd>
+                            </div>
+                            <div>
+                                <dt class="text-xs text-gray-400 mb-0.5">Collateral</dt>
+                                <dd class="text-gray-900">
+                                    {{ collect([$document->channelLabel(), $document->documentType?->name])->filter()->join(' · ') ?: '—' }}
+                                </dd>
+                            </div>
+                            <div>
+                                <dt class="text-xs text-gray-400 mb-0.5">Task due date</dt>
+                                <dd class="text-gray-900 {{ $document->due_date?->isPast() && ! in_array($document->status, \App\Models\Document::LIBRARY_STATUSES) ? 'text-red-600' : '' }}">{{ $document->due_date?->format('d M Y') ?? '—' }}</dd>
                             </div>
                             <div>
                                 <dt class="text-xs text-gray-400 mb-0.5">Category</dt>
@@ -292,17 +348,20 @@
                                 @if ($document->legal_hold)
                                     <span class="text-xs text-[#8f2323]" title="Content is frozen while this document is under legal hold">⚖️ Locked (Legal Hold)</span>
                                 @else
-                                    @if ($isOwner)
+                                    @if ($canUploadVersion)
                                         <button type="button" onclick="document.getElementById('upload-version-form').classList.toggle('hidden')" class="text-sm text-brand-600 hover:underline">+ Upload new version</button>
                                     @endif
                                 @endif
                             </div>
                         </div>
 
-                        @if ($isOwner && ! $document->legal_hold)
+                        @if ($canUploadVersion)
                             <form id="upload-version-form" method="POST" action="{{ route('documents.versions.store', $document) }}" enctype="multipart/form-data" class="hidden mb-4 p-4 bg-gray-50 rounded-lg space-y-3">
                                 @csrf
-                                <input type="file" name="file" required class="block w-full text-sm">
+                                @if ($document->status === 'in_review')
+                                    <p class="text-xs text-gray-500">The review carries on with this new version — current reviewers are notified and see it straight away.</p>
+                                @endif
+                                <x-file-dropzone name="file" required />
                                 <input type="text" name="change_notes" placeholder="Change notes" class="block w-full text-sm border-gray-300 rounded-lg">
                                 <x-primary-button>Upload Version</x-primary-button>
                             </form>
@@ -355,7 +414,7 @@
                                 @csrf
                                 <input type="text" name="title" placeholder="Reference title (optional, e.g. Vincent 2020 Final Study Report — defaults to the file name)" class="block w-full text-sm border-gray-300 rounded-lg">
                                 <input type="text" name="category" placeholder="Category (optional, e.g. Study, Certificate, Legal Template)" class="block w-full text-sm border-gray-300 rounded-lg">
-                                <input type="file" name="file" required class="block w-full text-sm">
+                                <x-file-dropzone name="file" required />
                                 <x-primary-button>Attach</x-primary-button>
                             </form>
                         @endif
@@ -449,27 +508,39 @@
                 <!-- Right: actions, workflow status, activity, AI tools, metadata -->
                 <div class="space-y-6">
 
-                    @if ($isPendingApprover)
+                    @if ($isPendingApprover && ! $user->canRecordDecisions())
+                        <div class="bg-white rounded-xl border border-gray-200 p-6 text-sm text-gray-600">
+                            You're listed at <strong>{{ $myAssignment->stage->name }}</strong>, but Brand Managers can start, upload and assign tasks — not approve or reject them.
+                            @if ($canManageTasks) Use <em>Reassign</em> under Workflow Status to hand it to the right stakeholder. @endif
+                        </div>
+                    @elseif ($isPendingApprover)
                         <div class="bg-white rounded-xl border-2 border-brand-200 p-6 shadow-sm shadow-brand-100/50">
-                            <div class="flex items-center gap-2 mb-3">
+                            <div class="flex items-center gap-2 mb-1">
                                 <span class="w-2 h-2 rounded-full bg-accent-500 animate-pulse"></span>
-                                <h3 class="text-base font-semibold text-gray-900">Your Decision Needed</h3>
+                                <h3 class="text-base font-semibold text-gray-900">{{ $myStageIsDraft ? 'Your Draft' : 'Your Decision Needed' }}</h3>
                             </div>
+                            <p class="text-xs text-gray-500 mb-3">
+                                {{ $myAssignment->stage->name }}
+                                @if ($myAssignment->dueAt())
+                                    · <span class="{{ $myAssignment->isOverdue() ? 'text-red-600 font-medium' : ($myAssignment->isDueSoon() ? 'text-amber-600 font-medium' : '') }}">due {{ $myAssignment->dueAt()->format('d M Y, H:i') }}</span>
+                                @endif
+                                @if ($myStageIsDraft && $canUploadVersion) · upload your draft under Versions, then submit it on. @endif
+                            </p>
                             <form method="POST" action="{{ route('approvals.act', $instance) }}" class="space-y-3" x-data="{ decision: null }">
                                 @csrf
                                 <div class="grid gap-2 text-sm">
                                     <label class="flex items-center gap-2.5 border border-gray-200 rounded-lg px-3 py-2.5 cursor-pointer transition has-[:checked]:border-emerald-400 has-[:checked]:bg-emerald-50 has-[:checked]:ring-1 has-[:checked]:ring-emerald-300 hover:border-gray-300">
                                         <input type="radio" name="decision" value="approved" required class="text-emerald-600 focus:ring-emerald-500">
                                         <span>
-                                            <span class="font-medium text-gray-800">Approved</span>
-                                            <span class="block text-xs text-gray-400">Clean approve, no changes needed</span>
+                                            <span class="font-medium text-gray-800">{{ $myStageIsDraft ? 'Submit to next stage' : 'Approved' }}</span>
+                                            <span class="block text-xs text-gray-400">{{ $myStageIsDraft ? 'Draft is ready — move it on' : 'Clean approve, no changes needed' }}</span>
                                         </span>
                                     </label>
                                     <label class="flex items-center gap-2.5 border border-gray-200 rounded-lg px-3 py-2.5 cursor-pointer transition has-[:checked]:border-amber-400 has-[:checked]:bg-amber-50 has-[:checked]:ring-1 has-[:checked]:ring-amber-300 hover:border-gray-300">
                                         <input type="radio" name="decision" value="approved_with_changes" class="text-amber-600 focus:ring-amber-500">
                                         <span>
-                                            <span class="font-medium text-gray-800">Approved with Changes</span>
-                                            <span class="block text-xs text-gray-400">Approved, but revisions requested</span>
+                                            <span class="font-medium text-gray-800">{{ $myStageIsDraft ? 'Needs changes' : 'Approved with Changes' }}</span>
+                                            <span class="block text-xs text-gray-400">{{ $myStageIsDraft ? 'Back to the task owner to fix, then on to the next stage' : 'Approved — task owner fixes it, then it moves to the next stage' }}</span>
                                         </span>
                                     </label>
                                     <label class="flex items-center gap-2.5 border border-gray-200 rounded-lg px-3 py-2.5 cursor-pointer transition has-[:checked]:border-red-400 has-[:checked]:bg-red-50 has-[:checked]:ring-1 has-[:checked]:ring-red-300 hover:border-gray-300">
@@ -482,17 +553,22 @@
                                 </div>
                                 <textarea name="comments" rows="3" placeholder="Comments (required unless a clean Approve)" class="block w-full text-sm border-gray-300 rounded-lg"></textarea>
 
-                                <div class="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                                    <p class="text-xs text-gray-600 mb-2">
-                                        By entering your password and submitting, you are applying your electronic signature to this decision under 21 CFR Part 11 — it will be permanently recorded as <strong>{{ auth()->user()->name }}</strong>, signed at the time of submission.
-                                    </p>
-                                    <x-input-label for="signature-password" value="Password (to sign)" class="!text-xs" />
-                                    <x-text-input type="password" id="signature-password" name="password" required autocomplete="current-password" class="mt-1 block w-full text-sm" placeholder="Re-enter your password to sign" />
-                                    <x-input-error :messages="$errors->get('password')" class="mt-1" />
-                                </div>
+                                <x-input-error :messages="$errors->get('approval')" class="mt-1" />
+                                @if ($requirePassword)
+                                    <div class="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                                        <p class="text-xs text-gray-600 mb-2">
+                                            By entering your password and submitting, you are applying your electronic signature to this decision under 21 CFR Part 11 — it will be permanently recorded as <strong>{{ auth()->user()->name }}</strong>, signed at the time of submission.
+                                        </p>
+                                        <x-input-label for="signature-password" value="Password (to sign)" class="!text-xs" />
+                                        <x-text-input type="password" id="signature-password" name="password" required autocomplete="current-password" class="mt-1 block w-full text-sm" placeholder="Re-enter your password to sign" />
+                                        <x-input-error :messages="$errors->get('password')" class="mt-1" />
+                                    </div>
+                                @else
+                                    <p class="text-[11px] text-gray-400">Recorded as <strong class="text-gray-600">{{ auth()->user()->name }}</strong> with the date, time and IP address.</p>
+                                @endif
 
                                 <button type="submit" class="w-full inline-flex items-center justify-center px-4 py-2.5 bg-brand-600 border border-transparent rounded-lg font-semibold text-sm text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 transition">
-                                    Sign &amp; Record Decision
+                                    {{ $myStageIsDraft ? 'Submit' : 'Record Decision' }}
                                 </button>
                             </form>
                         </div>
@@ -509,16 +585,71 @@
                         </div>
                     @endif
 
-                    @if ($isOwner && $document->status === 'approved_with_changes_pending')
-                        <div class="bg-white rounded-xl border-2 border-amber-200 p-6">
+                    @if (($isOwner || $canManageTasks) && $isParked)
+                        <div id="revise" class="bg-white rounded-xl border-2 border-amber-200 p-6" x-data="{ mode: '{{ $openWorkTask ? 'design' : 'upload' }}' }">
                             <h3 class="text-base font-semibold text-gray-900 mb-1">Revise &amp; Resubmit</h3>
-                            <p class="text-xs text-gray-400 mb-3">A reviewer requested changes — upload the revised file to resubmit for approval.</p>
-                            <form method="POST" action="{{ route('documents.submit', $document) }}" enctype="multipart/form-data" class="space-y-3">
-                                @csrf
-                                <input type="file" name="file" required class="block w-full text-sm">
-                                <input type="text" name="change_notes" placeholder="What changed?" class="block w-full text-sm border-gray-300 rounded-lg">
-                                <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">Upload Revision &amp; Resubmit</x-primary-button>
-                            </form>
+                            @if ($lastDecision?->comments)
+                                <p class="text-xs text-gray-600 bg-amber-50 rounded-md p-2 mb-3"><strong>{{ $lastDecision->actor?->name }}:</strong> {{ $lastDecision->comments }}</p>
+                            @endif
+
+                            @if ($openWorkTask)
+                                <div class="text-sm text-gray-700 space-y-2">
+                                    <p>With the Design Team{{ $openWorkTask->assignee ? ' — ' . $openWorkTask->assignee->name : ' (not yet assigned)' }}{{ $openWorkTask->due_at ? ', due ' . $openWorkTask->due_at->format('d M, H:i') : '' }}.</p>
+                                    <p class="text-xs text-gray-500">{{ $openWorkTask->resubmit_on_upload ? 'Their upload goes straight back into review.' : 'You\'ll be notified to resubmit when their upload is in.' }}</p>
+                                    <form method="POST" action="{{ route('work-tasks.destroy', $openWorkTask) }}" onsubmit="return confirm('Withdraw this from the Design Team?')">
+                                        @csrf @method('DELETE')
+                                        <button class="text-xs text-red-600 hover:underline">Withdraw from Design Team</button>
+                                    </form>
+                                </div>
+                            @else
+                                <div class="flex gap-1 mb-3 text-xs">
+                                    <button type="button" @click="mode = 'upload'" :class="mode === 'upload' ? 'bg-amber-100 text-amber-800' : 'text-gray-500 hover:bg-gray-50'" class="px-2.5 py-1 rounded-md font-medium">Upload it myself</button>
+                                    <button type="button" @click="mode = 'design'" :class="mode === 'design' ? 'bg-amber-100 text-amber-800' : 'text-gray-500 hover:bg-gray-50'" class="px-2.5 py-1 rounded-md font-medium">Send to Design Team</button>
+                                </div>
+                                <form x-show="mode === 'upload'" method="POST" action="{{ route('documents.submit', $document) }}" enctype="multipart/form-data" class="space-y-3">
+                                    @csrf
+                                    <x-file-dropzone name="file" />
+                                    <input type="text" name="change_notes" placeholder="What changed?" class="block w-full text-sm border-gray-300 rounded-lg">
+                                    <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">Upload Revision &amp; Resubmit</x-primary-button>
+                                    <p class="text-[11px] text-gray-400">Already uploaded the revision under Versions? Leave the file empty and resubmit.</p>
+                                </form>
+                                <form x-show="mode === 'design'" x-cloak method="POST" action="{{ route('documents.work-tasks.store', $document) }}" class="space-y-3">
+                                    @csrf
+                                    <textarea name="instructions" rows="3" class="block w-full text-sm border-gray-300 rounded-lg" placeholder="What should the designers change?">{{ $lastDecision?->comments }}</textarea>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label class="text-xs text-gray-500">Due date</label>
+                                            <input type="date" name="due_date" min="{{ now()->toDateString() }}" value="{{ now()->addHours(config('promomats.due_dates.default_stage_hours'))->toDateString() }}" class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
+                                        </div>
+                                        <div>
+                                            <label class="text-xs text-gray-500">Designer (optional)</label>
+                                            <select name="assign_to" class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
+                                                <option value="">Whole Design Team</option>
+                                                @foreach ($designTeam as $designer)
+                                                    <option value="{{ $designer->id }}">{{ $designer->name }}</option>
+                                                @endforeach
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <label class="flex items-center gap-2 text-xs text-gray-600">
+                                        <input type="hidden" name="resubmit_on_upload" value="0">
+                                        <input type="checkbox" name="resubmit_on_upload" value="1" checked class="rounded border-gray-300 text-brand-600">
+                                        Send it back into review as soon as the Design Team uploads it
+                                    </label>
+                                    <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">Send to Design Team</x-primary-button>
+                                </form>
+                            @endif
+                        </div>
+                    @endif
+
+                    @if ($openWorkTask && ($user->isDesignTeam() || $openWorkTask->assigned_to === $user->id) && ! $canManageTasks)
+                        <div class="bg-white rounded-xl border-2 border-violet-200 p-6">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">Design work: {{ $openWorkTask->typeLabel() }}</h3>
+                            <p class="text-xs text-gray-500 mb-2">From {{ $openWorkTask->requester?->name }}{{ $openWorkTask->due_at ? ' · due ' . $openWorkTask->due_at->format('d M, H:i') : '' }} · {{ $openWorkTask->assignee ? 'assigned to ' . $openWorkTask->assignee->name : 'unassigned' }}</p>
+                            @if ($openWorkTask->instructions)
+                                <p class="text-sm text-gray-700 whitespace-pre-line mb-3">{{ $openWorkTask->instructions }}</p>
+                            @endif
+                            @include('workflow.partials.work-task-rows', ['tasks' => collect([$openWorkTask])])
                         </div>
                     @endif
 
@@ -535,11 +666,44 @@
                                     <p class="font-medium text-gray-900 mb-1.5">{{ $run->stage->name }}</p>
                                     <ul class="space-y-1.5 text-sm">
                                         @forelse ($instance->pendingAssignees->where('workflow_stage_id', $run->workflow_stage_id) as $assignee)
-                                            <li class="flex items-center gap-2">
-                                                <x-avatar :name="$assignee->user?->name" size="xs" />
-                                                <span class="text-gray-800">{{ $assignee->user?->name }}</span>
-                                                @if ($assignee->isOverdue())
-                                                    <span title="Overdue — waiting {{ $assignee->hoursWaiting() }}h (SLA {{ $assignee->slaHours() }}h)" class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">🚩 overdue</span>
+                                            <li x-data="{ edit: false }">
+                                                <div class="flex items-center gap-2">
+                                                    <x-avatar :name="$assignee->user?->name" size="xs" />
+                                                    <span class="text-gray-800">{{ $assignee->user?->name }}</span>
+                                                    @if ($assignee->isOverdue())
+                                                        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">overdue</span>
+                                                    @elseif ($assignee->isDueSoon())
+                                                        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">due soon</span>
+                                                    @endif
+                                                    @if ($canManageTasks)
+                                                        <button type="button" @click="edit = ! edit" class="ml-auto text-xs text-brand-600 hover:underline">Reassign / due</button>
+                                                    @endif
+                                                </div>
+                                                <p class="text-[11px] text-gray-400 ml-7">
+                                                    Due {{ $assignee->dueAt()?->format('d M Y, H:i') ?? '—' }}
+                                                    @if ($assignee->reassigned_from_id) · reassigned by {{ $assignee->reassignedBy?->name }}{{ $assignee->reassign_reason ? ' (' . $assignee->reassign_reason . ')' : '' }} @endif
+                                                </p>
+                                                @if ($canManageTasks)
+                                                    <div x-show="edit" x-cloak class="mt-2 ml-7 p-2.5 bg-gray-50 rounded-lg space-y-2">
+                                                        <form method="POST" action="{{ route('documents.tasks.reassign', [$document, $assignee]) }}" class="space-y-1.5">
+                                                            @csrf
+                                                            <select name="user_id" required class="block w-full text-xs border-gray-300 rounded-md">
+                                                                <option value="">Reassign to…</option>
+                                                                @foreach ($reassignOptions as $option)
+                                                                    @if ($option->id !== $assignee->user_id)
+                                                                        <option value="{{ $option->id }}">{{ $option->name }}</option>
+                                                                    @endif
+                                                                @endforeach
+                                                            </select>
+                                                            <input type="text" name="reason" placeholder="Reason (e.g. on leave)" class="block w-full text-xs border-gray-300 rounded-md">
+                                                            <button class="text-xs font-medium text-white bg-brand-600 rounded-md px-2.5 py-1">Reassign</button>
+                                                        </form>
+                                                        <form method="POST" action="{{ route('documents.tasks.due', [$document, $assignee]) }}" class="flex items-center gap-1.5">
+                                                            @csrf
+                                                            <input type="datetime-local" name="due_at" required value="{{ $assignee->dueAt()?->format('Y-m-d\TH:i') }}" class="text-xs border-gray-300 rounded-md py-1">
+                                                            <button class="text-xs text-brand-700 border border-brand-200 rounded-md px-2 py-1">Set due</button>
+                                                        </form>
+                                                    </div>
                                                 @endif
                                             </li>
                                         @empty
@@ -548,8 +712,13 @@
                                     </ul>
                                 </div>
                             @empty
-                                <p class="text-sm text-gray-400">No stage currently open.</p>
+                                @if ($isParked)
+                                    <p class="text-sm text-amber-700">With {{ $openWorkTask ? 'the Design Team' : $document->owner?->name . ' (task owner)' }} for revision.</p>
+                                @else
+                                    <p class="text-sm text-gray-400">No stage currently open.</p>
+                                @endif
                             @endforelse
+                            <x-input-error :messages="$errors->get('reassign')" class="mt-2" />
                         @else
                             <p class="text-sm text-gray-400">Not yet submitted into a workflow.</p>
                         @endif

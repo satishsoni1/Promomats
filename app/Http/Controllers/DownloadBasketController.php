@@ -14,6 +14,8 @@ class DownloadBasketController extends Controller
 
     public function add(Request $request, Document $document)
     {
+        $this->authorize('view', $document);
+
         $basket = collect(session(self::SESSION_KEY, []))->push($document->id)->unique()->values()->all();
         session([self::SESSION_KEY => $basket]);
 
@@ -37,6 +39,7 @@ class DownloadBasketController extends Controller
     public function show()
     {
         $documents = Document::with('currentVersion')
+            ->visibleTo(request()->user())
             ->whereIn('id', session(self::SESSION_KEY, []))
             ->get();
 
@@ -50,6 +53,7 @@ class DownloadBasketController extends Controller
     public function download(): StreamedResponse
     {
         $documents = Document::with('currentVersion')
+            ->visibleTo(request()->user())
             ->whereIn('id', session(self::SESSION_KEY, []))
             ->get()
             ->filter(fn ($d) => $d->currentVersion);

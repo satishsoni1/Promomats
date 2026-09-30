@@ -19,10 +19,12 @@ use Illuminate\Console\Command;
 class FlagOverdueApprovals extends Command
 {
     protected $signature = 'documents:flag-overdue-approvals';
-    protected $description = 'Sends a one-time reminder notification for pending approvals that have exceeded their SLA (default 48 hours).';
+    protected $description = 'Emails a one-time "due soon" reminder before each pending approval is due, and a one-time overdue alert once it passes its due date (default 48 hours per stage).';
 
     public function handle(): int
     {
+        $dueSoon = $this->sendDueSoonReminders();
+
         $overdue = DocumentStageAssignee::where('status', 'pending')
             ->whereNull('overdue_notified_at')
             ->with(['user', 'stage', 'instance.document.owner'])
@@ -40,7 +42,7 @@ class FlagOverdueApprovals extends Command
                     document: $document,
                     event: 'overdue_reminder',
                     stage: $stage,
-                    comments: "Waiting {$assignee->hoursWaiting()}h (SLA {$assignee->slaHours()}h).",
+                    comments: 'It was due ' . $assignee->dueAt()->format('d M Y, H:i') . " (waiting {$assignee->hoursWaiting()}h).",
                 ));
             }
 
@@ -50,7 +52,7 @@ class FlagOverdueApprovals extends Command
                     document: $document,
                     event: 'overdue_reminder',
                     stage: $stage,
-                    comments: "Still waiting on {$assignee->user?->name} after {$assignee->hoursWaiting()}h (SLA {$assignee->slaHours()}h).",
+                    comments: "Still waiting on {$assignee->user?->name} - it was due " . $assignee->dueAt()->format('d M Y, H:i') . '.',
                 ));
             }
 
@@ -59,7 +61,35 @@ class FlagOverdueApprovals extends Command
             $reminded++;
         }
 
-        $this->info("Overdue-approval scan complete. Reminders sent: {$reminded}.");
+        $this->info("Due-date scan complete. Due-soon reminders: {$dueSoon}. Overdue alerts: {$reminded}.");
         return self::SUCCESS;
+    }
+
+    /**
+     * One reminder per task, sent once it's within the reminder window
+     * (config promomats.due_dates.reminder_hours_before, default 12h) of its due date.
+     */
+    protected function sendDueSoonReminders(): int
+    {
+        $tasks = DocumentStageAssignee::where('status', 'pending')
+            ->whereNull('due_soon_notified_at')
+            ->whereNull('overdue_notified_at')
+            ->with(['user', 'stage', 'instance.document'])
+            ->get()
+            ->filter(fn ($assignee) => $assignee->isDueSoon());
+
+        foreach ($tasks as $assignee) {
+            if ($assignee->user && $assignee->user->is_active) {
+                $assignee->user->notify(new DocumentActionNotification(
+                    document: $assignee->instance->document,
+                    event: 'due_soon_reminder',
+                    stage: $assignee->stage,
+                    comments: 'Due by ' . $assignee->dueAt()->format('d M Y, H:i') . '.',
+                ));
+            }
+            $assignee->update(['due_soon_notified_at' => now()]);
+        }
+
+        return $tasks->count();
     }
 }

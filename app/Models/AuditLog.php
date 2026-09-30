@@ -47,6 +47,11 @@ class AuditLog extends Model
         'ARCHIVED' => 'Archived',
         'LEGAL_HOLD_PLACED' => 'Legal hold placed',
         'LEGAL_HOLD_RELEASED' => 'Legal hold released',
+        'TASK_REASSIGNED' => 'Task reassigned',
+        'WORK_TASK_CREATED' => 'Sent to Design Team',
+        'WORK_TASK_ASSIGNED' => 'Design work assigned',
+        'WORK_TASK_CANCELLED' => 'Design work withdrawn',
+        'DUE_DATE_CHANGED' => 'Due date changed',
     ];
 
     public function user()

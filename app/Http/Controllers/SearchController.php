@@ -20,6 +20,7 @@ class SearchController extends Controller
 
         if ($q !== '') {
             $documents = Document::with(['owner', 'currentVersion'])
+                ->visibleTo($request->user())
                 ->where(function ($query) use ($q) {
                     $query->where('title', 'like', "%{$q}%")
                         ->orWhere('reference_no', 'like', "%{$q}%")
@@ -57,6 +58,7 @@ class SearchController extends Controller
 
         if ($q !== '') {
             $catalog = Document::query()
+                ->visibleTo($request->user())
                 ->latest()
                 ->limit(300)
                 ->get(['id', 'title', 'description', 'category', 'status', 'products', 'countries', 'expiry_date', 'created_at'])
@@ -86,7 +88,7 @@ class SearchController extends Controller
             }
 
             $matches = $this->parseMatches($raw);
-            $documentsById = Document::with(['owner', 'currentVersion'])->whereIn('id', array_column($matches, 'id'))->get()->keyBy('id');
+            $documentsById = Document::with(['owner', 'currentVersion'])->visibleTo($request->user())->whereIn('id', array_column($matches, 'id'))->get()->keyBy('id');
 
             $results = collect($matches)
                 ->map(fn ($m) => isset($documentsById[$m['id']]) ? ['document' => $documentsById[$m['id']], 'reason' => $m['reason']] : null)

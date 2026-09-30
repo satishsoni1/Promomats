@@ -4,6 +4,7 @@ namespace App\Listeners\Workflow;
 
 use App\Events\ApprovalAssigned;
 use App\Events\ApprovalCompleted;
+use App\Events\DocumentReturnedToOwner;
 use App\Events\RevisionRequested;
 use App\Events\WorkflowCompleted;
 use App\Models\DocumentWorkflowInstance;
@@ -39,6 +40,18 @@ class SendWorkflowNotifications
         $this->notifyUsers(
             $event->instance, $event->instance->stakeholderIds(), 'action_taken',
             $event->stage, $event->actor, 'approved_with_changes', $event->comments
+        );
+    }
+
+    /**
+     * The job is now waiting on its task owner - tell them plainly, separate from
+     * the general "someone took an action" update everyone gets.
+     */
+    public function handleReturnedToOwner(DocumentReturnedToOwner $event): void
+    {
+        $this->notifyUsers(
+            $event->instance, [$event->instance->document->owner_id], 'revision_needed',
+            $event->stage, $event->actor, $event->decision
         );
     }
 
@@ -80,5 +93,6 @@ class SendWorkflowNotifications
         $events->listen(ApprovalCompleted::class, [self::class, 'handleApprovalCompleted']);
         $events->listen(RevisionRequested::class, [self::class, 'handleRevisionRequested']);
         $events->listen(WorkflowCompleted::class, [self::class, 'handleWorkflowCompleted']);
+        $events->listen(DocumentReturnedToOwner::class, [self::class, 'handleReturnedToOwner']);
     }
 }

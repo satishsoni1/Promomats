@@ -4,7 +4,7 @@
         ['route' => 'documents.index', 'pattern' => 'documents.*', 'label' => 'Documents', 'icon' => 'document'],
         ['route' => 'library.folders.index', 'pattern' => 'library.*', 'label' => 'Library', 'icon' => 'book'],
         ['route' => 'projects.index', 'pattern' => 'projects.*', 'label' => 'Projects', 'icon' => 'folder'],
-        ['route' => 'approvals.inbox', 'pattern' => 'approvals.*', 'label' => 'Approvals', 'icon' => 'check-circle', 'badge' => auth()->user()->pendingApprovals()->count()],
+        ['route' => 'workflow.active', 'pattern' => ['workflow.*', 'approvals.*'], 'label' => 'Active Workflow', 'icon' => 'check-circle', 'badge' => auth()->user()->actionRequiredCount()],
     ];
 
     if (auth()->user()->can('viewReports', \App\Models\Document::class)) {
@@ -21,6 +21,7 @@
         'chart' => 'M5 19.5V10m6.5 9.5V4.5M18 19.5V13',
         'help' => 'M9.5 9a2.5 2.5 0 1 1 3.9 2.07c-.66.46-1.4 1.05-1.4 1.93v.25M12 17h.01M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z',
         'shield' => 'M12 3.5l7 2.5v5.5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-2.5Z',
+        'support' => 'M4.5 13v-1.5a7.5 7.5 0 0 1 15 0V13M4.5 13h2v5h-1A1.5 1.5 0 0 1 4 16.5V13.5M19.5 13h-2v5h1a1.5 1.5 0 0 0 1.5-1.5V13.5M17.5 18c0 1.1-1.3 2-3 2h-1.5',
     ];
 @endphp
 {{--
@@ -77,7 +78,14 @@
             @endcan
         </nav>
 
-        <div class="px-3 pb-3">
+        <div class="px-3 pb-3 space-y-0.5">
+            <a href="{{ route('helpdesk.index') }}"
+               class="group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {{ request()->routeIs('helpdesk.*') ? 'bg-white/10 text-white' : 'text-teal-100/70 hover:bg-white/5 hover:text-white' }}">
+                <svg class="w-[18px] h-[18px] shrink-0 {{ request()->routeIs('helpdesk.*') ? 'text-accent-400' : 'text-teal-100/50 group-hover:text-teal-100' }}" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="{{ $icons['support'] }}" />
+                </svg>
+                <span>Helpdesk</span>
+            </a>
             <a href="{{ route('help.index') }}"
                class="group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {{ request()->routeIs('help.*') ? 'bg-white/10 text-white' : 'text-teal-100/70 hover:bg-white/5 hover:text-white' }}">
                 <svg class="w-[18px] h-[18px] shrink-0 {{ request()->routeIs('help.*') ? 'text-accent-400' : 'text-teal-100/50 group-hover:text-teal-100' }}" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">

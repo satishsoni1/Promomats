@@ -21,6 +21,25 @@
                           workflowId: @js(old('workflow_template_id', '')),
                           brandId: @js(old('brand_id', '')),
                           documentTypeId: @js(old('document_type_id', '')),
+                          channel: @js(old('channel', '')),
+                          placeholder: @js((bool) old('is_placeholder', false)),
+                          docTypes: @js($documentTypes->map(fn ($t) => ['id' => (string) $t->id, 'name' => $t->name, 'channel' => $t->channel])->values()),
+                          defaultDueHours: @js($defaultDueHours),
+                          get typeOptions() {
+                              return this.docTypes.filter(t => this.channel ? t.channel === this.channel : true);
+                          },
+                          onChannelChange() {
+                              const current = this.docTypes.find(t => t.id === this.documentTypeId);
+                              if (current && this.channel && current.channel !== this.channel) this.documentTypeId = '';
+                              this.onBrandOrTypeChange();
+                          },
+                          addExtra(stage, id) {
+                              if (! id) return;
+                              stage.extra = stage.extra || [];
+                              const already = stage.extra.some(u => String(u.id) === String(id)) || stage.candidates.some(c => String(c.id) === String(id));
+                              const user = this.allUsers.find(u => String(u.id) === String(id));
+                              if (user && ! already) stage.extra.push(user);
+                          },
                           suggested: false,
                           onProjectChange() {
                               const p = this.projects.find(pr => pr.id === this.projectId);
@@ -109,7 +128,7 @@
                         <x-input-error :messages="$errors->get('description')" class="mt-2" />
                     </div>
 
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                         <div>
                             <x-input-label for="brand_id" value="Brand" />
                             <select id="brand_id" name="brand_id" x-model="brandId" @change="onBrandOrTypeChange()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
@@ -120,13 +139,22 @@
                             </select>
                         </div>
                         <div>
-                            <x-input-label for="document_type_id" value="Document Type" />
+                            <x-input-label for="channel" value="Collateral classification" />
+                            <select id="channel" name="channel" x-model="channel" @change="onChannelChange()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
+                                <option value="">— Select —</option>
+                                <option value="print">Print</option>
+                                <option value="digital">Digital</option>
+                            </select>
+                        </div>
+                        <div>
+                            <x-input-label for="document_type_id" value="Type of collateral" />
                             <select id="document_type_id" name="document_type_id" x-model="documentTypeId" @change="onBrandOrTypeChange()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
                                 <option value="">— Not specified —</option>
-                                @foreach ($documentTypes as $type)
-                                    <option value="{{ $type->id }}" @selected(old('document_type_id') == $type->id)>{{ $type->name }}</option>
-                                @endforeach
+                                <template x-for="t in typeOptions" :key="t.id">
+                                    <option :value="t.id" x-text="t.name + (! channel && t.channel ? ' (' + (t.channel === 'print' ? 'Print' : 'Digital') + ')' : '')" :selected="t.id === documentTypeId"></option>
+                                </template>
                             </select>
+                            <p class="mt-1 text-xs text-gray-500">LBL, LBC, Retailer Poster, VAF, Stockists Poster, In-/Out-Clinic Visibility, Dangler…</p>
                         </div>
                     </div>
 
@@ -212,34 +240,54 @@
                                 <div class="space-y-4">
                                     <div class="flex items-start justify-between gap-3">
                                         <div>
-                                            <p class="text-sm font-semibold text-gray-800">Approvers for this workflow</p>
-                                            <p class="text-xs text-gray-500 mt-0.5">Where a stage has several candidates you can send it to one named person; leave all ticked to use the full group.</p>
+                                            <p class="text-sm font-semibold text-gray-800">Stakeholders &amp; due dates for each stage</p>
+                                            <p class="text-xs text-gray-500 mt-0.5">Tick the person (or people) who should take each stage — e.g. Jalba or Rathna for Content Manager, the right TM/AGM, this brand's Medical / Regulatory / Legal reviewers. Add anyone else if needed. Each stage gets {{ $defaultDueHours }} hours by default.</p>
                                         </div>
                                         <button type="button" class="shrink-0 text-xs px-2.5 py-1 bg-white border border-brand-300 text-brand-700 rounded-md hover:bg-brand-50" @click="openEditor()">Edit stages…</button>
                                     </div>
                                     <template x-for="stage in templateApprovers[workflowId]" :key="stage.stage_id">
                                         <div class="rounded border border-gray-200 bg-white p-3">
-                                            <div class="flex items-center justify-between">
+                                            <div class="flex flex-wrap items-center justify-between gap-2">
                                                 <span class="text-sm font-medium text-gray-700">
                                                     <span x-text="stage.sequence_no + '. ' + stage.name"></span>
                                                     <span x-show="stage.parallel_group" class="ml-1 text-[10px] uppercase tracking-wide text-brand-600">parallel</span>
+                                                    <span x-show="stage.is_draft" class="ml-1 text-[10px] uppercase tracking-wide text-violet-600">draft</span>
                                                 </span>
-                                                <span class="text-xs text-gray-400" x-text="stage.candidates.length + (stage.candidates.length === 1 ? ' candidate' : ' candidates')"></span>
+                                                <label class="flex items-center gap-1.5 text-xs text-gray-500">
+                                                    Due in
+                                                    <input type="number" min="1" max="2160" :name="'stage_due_hours[' + stage.stage_id + ']'" :value="stage.due_hours || defaultDueHours"
+                                                           class="w-16 text-xs border-gray-300 rounded-md py-1">
+                                                    hours
+                                                </label>
                                             </div>
-                                            <div class="mt-2 grid grid-cols-2 gap-1.5">
+                                            <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                                                 <template x-for="cand in stage.candidates" :key="cand.id">
                                                     <label class="flex items-center gap-2 text-sm text-gray-600">
                                                         <input type="checkbox"
                                                                :name="'stage_approvers[' + stage.stage_id + '][]'"
                                                                :value="cand.id"
-                                                               checked
-                                                               :disabled="stage.candidates.length === 1"
+                                                               :checked="stage.candidates.length === 1"
                                                                class="rounded border-gray-300 text-brand-600">
                                                         <span x-text="cand.name"></span>
                                                     </label>
                                                 </template>
+                                                <template x-for="u in (stage.extra || [])" :key="'x' + u.id">
+                                                    <label class="flex items-center gap-2 text-sm text-gray-700">
+                                                        <input type="checkbox" :name="'stage_approvers[' + stage.stage_id + '][]'" :value="u.id" checked class="rounded border-gray-300 text-brand-600">
+                                                        <span x-text="u.name"></span>
+                                                        <span class="text-[10px] uppercase tracking-wide text-emerald-600">added</span>
+                                                    </label>
+                                                </template>
                                             </div>
-                                            <p x-show="stage.candidates.length === 1" class="mt-1 text-[11px] text-gray-400">Only one candidate — nothing to choose.</p>
+                                            <div class="mt-2 flex items-center gap-2">
+                                                <select @change="addExtra(stage, $event.target.value); $event.target.value = ''" class="text-xs border-gray-300 rounded-md py-1 max-w-xs">
+                                                    <option value="">+ Add someone else…</option>
+                                                    <template x-for="u in allUsers" :key="u.id">
+                                                        <option :value="u.id" x-text="u.name"></option>
+                                                    </template>
+                                                </select>
+                                                <span class="text-[11px] text-gray-400">Leave everyone unticked to send it to all of them (first to act decides).</span>
+                                            </div>
                                         </div>
                                     </template>
                                     <x-input-error :messages="$errors->get('stage_approvers')" class="mt-1" />
@@ -334,7 +382,12 @@
                         </div>
                     </template>
 
-                    <div class="grid grid-cols-3 gap-4">
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div>
+                            <x-input-label for="due_date" value="Task due date" />
+                            <x-text-input type="date" id="due_date" name="due_date" class="mt-1 block w-full" :value="old('due_date')" />
+                            <p class="mt-1 text-[11px] text-gray-500">Can be after the expiry date.</p>
+                        </div>
                         <div>
                             <x-input-label for="start_date" value="Start Date" />
                             <x-text-input type="date" id="start_date" name="start_date" class="mt-1 block w-full" :value="old('start_date')" />
@@ -349,10 +402,26 @@
                         </div>
                     </div>
 
-                    <div>
-                        <x-input-label for="file" value="File" />
-                        <input type="file" id="file" name="file" required class="mt-1 block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200" />
-                        <p class="mt-1 text-xs text-gray-500">Any file type accepted, up to 500MB.</p>
+                    <div class="space-y-3">
+                        <label class="flex items-start gap-2.5 rounded-md border border-gray-200 p-3 cursor-pointer has-[:checked]:border-violet-300 has-[:checked]:bg-violet-50/50">
+                            <input type="checkbox" name="is_placeholder" value="1" x-model="placeholder" class="mt-0.5 rounded border-gray-300 text-violet-600">
+                            <span>
+                                <span class="block text-sm font-medium text-gray-800">Placeholder — the Design Team will upload the artwork</span>
+                                <span class="block text-xs text-gray-500">Creates the job without a file and sends it to the whole Design Team, who assign it to a designer. You're notified when the artwork is in.</span>
+                            </span>
+                        </label>
+
+                        <div x-show="placeholder" x-cloak>
+                            <x-input-label for="design_instructions" value="Brief for the Design Team" />
+                            <textarea id="design_instructions" name="design_instructions" rows="3" class="mt-1 block w-full text-sm border-gray-300 rounded-md" placeholder="Sizes, key message, claims to use, reference files…">{{ old('design_instructions') }}</textarea>
+                        </div>
+
+                        <div x-show="! placeholder">
+                            <x-input-label for="file" value="File" />
+                            <div class="mt-1" x-effect="$el.querySelector('input[type=file]').required = ! placeholder">
+                                <x-file-dropzone id="file" name="file" hint="Any file type accepted, up to 500MB." />
+                            </div>
+                        </div>
                         <x-input-error :messages="$errors->get('file')" class="mt-2" />
                     </div>
 

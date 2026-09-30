@@ -29,6 +29,11 @@ use App\Http\Controllers\HelpController;
 use App\Http\Controllers\LibraryFileController;
 use App\Http\Controllers\LibraryFolderController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\WordReviewController;
+use App\Http\Controllers\ActiveWorkflowController;
+use App\Http\Controllers\DocumentTaskController;
+use App\Http\Controllers\WorkTaskController;
+use App\Http\Controllers\SupportTicketController;
 use App\Http\Controllers\PdfEditController;
 use App\Http\Controllers\ClaimReferenceMappingController;
 use App\Http\Controllers\PdfLinkController;
@@ -90,6 +95,25 @@ Route::middleware(['auth'])->group(function () {
 
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
+    // Active Workflow: everything waiting on action, per-Brand-Manager views, Design Team queue.
+    Route::get('/active-workflow', [ActiveWorkflowController::class, 'index'])->name('workflow.active');
+
+    // Task owner: reassign a pending task / move its due date.
+    Route::post('/documents/{document}/tasks/{task}/reassign', [DocumentTaskController::class, 'reassign'])->name('documents.tasks.reassign');
+    Route::post('/documents/{document}/tasks/{task}/due', [DocumentTaskController::class, 'updateDue'])->name('documents.tasks.due');
+
+    // Design Team umbrella work (placeholder artwork, rework after Approved with changes).
+    Route::post('/documents/{document}/work-tasks', [WorkTaskController::class, 'store'])->name('documents.work-tasks.store');
+    Route::post('/work-tasks/{task}/take', [WorkTaskController::class, 'take'])->name('work-tasks.take');
+    Route::post('/work-tasks/{task}/assign', [WorkTaskController::class, 'assign'])->name('work-tasks.assign');
+    Route::post('/work-tasks/{task}/complete', [WorkTaskController::class, 'complete'])->name('work-tasks.complete');
+    Route::delete('/work-tasks/{task}', [WorkTaskController::class, 'destroy'])->name('work-tasks.destroy');
+
+    // Helpdesk.
+    Route::get('/helpdesk', [SupportTicketController::class, 'index'])->name('helpdesk.index');
+    Route::post('/helpdesk', [SupportTicketController::class, 'store'])->name('helpdesk.store');
+    Route::patch('/helpdesk/{ticket}', [SupportTicketController::class, 'update'])->name('helpdesk.update');
+
     Route::get('/notifications/{id}/open', [NotificationController::class, 'open'])->name('notifications.open');
     Route::post('/notifications/read-all', [NotificationController::class, 'readAll'])->name('notifications.read-all');
 
@@ -107,6 +131,7 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/documents/{document}/versions', [DocumentController::class, 'uploadNewVersion'])->name('documents.versions.store');
     Route::get('/documents/{document}/pdf-editor', [PdfEditController::class, 'edit'])->name('documents.pdf-editor.edit');
     Route::post('/documents/{document}/pdf-edits', [PdfEditController::class, 'store'])->name('documents.pdf-edits.store');
+    Route::post('/documents/{document}/word-review', [WordReviewController::class, 'store'])->name('documents.word-review.store');
     Route::post('/documents/{document}/status', [DocumentController::class, 'updateStatus'])->name('documents.status.update');
     Route::post('/documents/{document}/editing-access', [DocumentController::class, 'updateEditingAccess'])->name('documents.editing-access.update');
     Route::post('/documents/{document}/project', [DocumentController::class, 'updateProject'])->name('documents.project.update');
@@ -119,6 +144,8 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/document-versions/{version}/download', [DocumentController::class, 'downloadVersion'])->name('documents.versions.download');
     Route::get('/document-versions/{version}/view', [DocumentController::class, 'viewVersion'])->name('documents.versions.view');
     Route::post('/documents/{document}/comments', [DocumentCommentController::class, 'store'])->name('documents.comments.store');
+    Route::patch('/documents/{document}/comments/{comment}/resolve', [DocumentCommentController::class, 'resolve'])->name('documents.comments.resolve');
+    Route::patch('/documents/{document}/comments/{comment}', [DocumentCommentController::class, 'update'])->name('documents.comments.update');
     Route::post('/documents/{document}/claims', [DocumentClaimController::class, 'store'])->name('documents.claims.store');
     Route::delete('/documents/{document}/claims/{claim}', [DocumentClaimController::class, 'destroy'])->name('documents.claims.destroy');
 

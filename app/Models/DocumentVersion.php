@@ -70,6 +70,25 @@ class DocumentVersion extends Model
             || in_array(strtolower(pathinfo($this->original_filename, PATHINFO_EXTENSION)), ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg']);
     }
 
+    /**
+     * Word-processor documents the in-browser Word reviewer handles. Only .docx
+     * gets the read-only fallback preview (docx-preview can't parse the rest);
+     * ONLYOFFICE converts .doc/.odt/.rtf on open.
+     */
+    public function isWordDocument(): bool
+    {
+        return in_array($this->extension(), ['docx', 'doc', 'odt', 'rtf', 'docm', 'dotx'], true)
+            || in_array($this->mime_type, [
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'application/msword',
+            ], true);
+    }
+
+    public function extension(): string
+    {
+        return strtolower(pathinfo((string) $this->original_filename, PATHINFO_EXTENSION));
+    }
+
     public function humanFileSize(): string
     {
         $bytes = $this->file_size_bytes ?? 0;

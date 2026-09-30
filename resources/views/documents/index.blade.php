@@ -15,12 +15,14 @@
         <div class="flex items-center justify-between">
             <div>
                 <h2 class="font-semibold text-xl text-gray-800 leading-tight">{{ __('Documents') }}</h2>
-                <p class="text-xs text-gray-500 mt-0.5">{{ number_format($total) }} document{{ $total === 1 ? '' : 's' }} in the system</p>
+                <p class="text-xs text-gray-500 mt-0.5">{{ number_format($total) }} document{{ $total === 1 ? '' : 's' }} you can see — jobs you're a stakeholder in, plus the approved library</p>
             </div>
+            @can('create', \App\Models\Document::class)
             <a href="{{ route('documents.create') }}" class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 border border-transparent rounded-lg font-semibold text-xs text-white uppercase tracking-widest shadow-sm hover:bg-brand-700 hover:shadow transition">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                 Upload Document
             </a>
+            @endcan
         </div>
     </x-slot>
 

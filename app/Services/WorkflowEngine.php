@@ -6,6 +6,7 @@ use App\Events\ApprovalAssigned;
 use App\Events\ApprovalCompleted;
 use App\Events\DocumentFinalApproved;
 use App\Events\DocumentResubmitted;
+use App\Events\DocumentReturnedToOwner;
 use App\Events\DocumentSubmitted;
 use App\Events\RevisionRequested;
 use App\Events\WorkflowCompleted;
@@ -96,6 +97,12 @@ class WorkflowEngine
 
         $instance->update(['current_stage_id' => $group->first()->id]);
 
+        // A stage opening means someone is reviewing it now - never leave the
+        // document showing "Revise & Resubmit" while a reviewer actually has it.
+        if ($instance->document->status === 'approved_with_changes_pending') {
+            $instance->document->update(['status' => 'in_review']);
+        }
+
         $anyOpened = false;
 
         foreach ($group as $memberStage) {
@@ -136,6 +143,8 @@ class WorkflowEngine
                 ]);
             }
 
+            $dueHours = $instance->document->dueHoursForStage($memberStage);
+
             foreach ($userIds as $userId) {
                 $task = DocumentStageAssignee::create([
                     'document_workflow_instance_id' => $instance->id,
@@ -143,6 +152,7 @@ class WorkflowEngine
                     'user_id' => $userId,
                     'status' => 'pending',
                     'assigned_at' => now(),
+                    'due_at' => now()->addHours($dueHours),
                 ]);
 
                 ApprovalAssigned::dispatch($instance, $memberStage, User::find($userId), $task);
@@ -172,13 +182,16 @@ class WorkflowEngine
     {
         $picked = $document->approverIdsForStage($stage);
 
-        if ($picked !== null) {
-            return $picked;
-        }
-
-        return collect($stage->approvers()->get())
+        $ids = $picked ?? collect($stage->approvers()->get())
             ->flatMap(fn ($approver) => $approver->resolveUserIds())
             ->unique()
+            ->values();
+
+        // Brand Managers start jobs and assign stakeholders but never approve or
+        // reject (UAT feedback) - so they're never handed a decision task.
+        return User::with('roles')->whereIn('id', $ids)->get()
+            ->reject(fn (User $u) => $u->isBrandManagerOnly())
+            ->pluck('id')
             ->values();
     }
 
@@ -206,6 +219,12 @@ class WorkflowEngine
             if (! $assignee) {
                 throw ValidationException::withMessages([
                     'approval' => 'You are not a pending approver for this document at its current stage.',
+                ]);
+            }
+
+            if (! $actor->canRecordDecisions()) {
+                throw ValidationException::withMessages([
+                    'approval' => 'Brand Managers can start, upload and assign tasks, but cannot approve or reject them.',
                 ]);
             }
 
@@ -391,7 +410,15 @@ class WorkflowEngine
 
         switch ($transition->outcome_type) {
             case 'next_stage':
-                $target = $transition->targetStage ?? $stage->nextStage();
+                // Leaving a legacy "revision hub" after it cleared a revision: pick
+                // review back up where it was flagged, rather than walking every
+                // stage from the hub onwards again.
+                if ($stage->is_revision_stage && $instance->resume_at_stage_id && $instance->resume_at_stage_id !== $stage->id) {
+                    $target = $instance->resumeAtStage;
+                    $instance->update(['resume_at_stage_id' => null]);
+                } else {
+                    $target = $transition->targetStage ?? $stage->nextStage();
+                }
                 if ($target) {
                     $this->enterStage($instance, $target);
                 } else {
@@ -407,6 +434,7 @@ class WorkflowEngine
                 // version is submitted.
                 $instance->update(['resume_at_stage_id' => $transition->resume_at_stage_id ?? $stage->id]);
                 $instance->document->update(['status' => 'approved_with_changes_pending']);
+                DocumentReturnedToOwner::dispatch($instance, $stage, $decision, $actor);
                 break;
 
             case 'return_to_stage':
@@ -415,7 +443,6 @@ class WorkflowEngine
                 // another gate for a fresh pass, remembering where to resume once
                 // that clears.
                 $instance->update(['resume_at_stage_id' => $transition->resume_at_stage_id ?? $stage->id]);
-                $instance->document->update(['status' => 'approved_with_changes_pending']);
                 $this->enterStage($instance, $transition->targetStage);
                 break;
 
@@ -449,8 +476,95 @@ class WorkflowEngine
 
             DocumentResubmitted::dispatch($instance, $newVersion, $newVersion->uploader);
 
+            // "Approved with changes" means that stage already approved it: once the
+            // revision is in, move on to the next stage (or finish, after the last
+            // one) instead of sending it back to the same reviewers (UAT feedback).
+            // Not Approved still goes back to the stage that rejected it.
+            if ($this->wasApprovedWithChanges($instance, $resumeStage)
+                && ($instance->document->workflowTemplate->awc_resume ?? 'next_stage') === 'next_stage') {
+                $next = $resumeStage->nextStage();
+                $next ? $this->enterStage($instance, $next) : $this->completeInstance($instance, 'approved', $newVersion->uploader);
+
+                return;
+            }
+
             $this->enterStage($instance, $resumeStage);
         });
+    }
+
+    /**
+     * Whether the stage (or parallel group) review is resuming at last resolved as
+     * "Approved with changes" - the group's fanned-in verdict, same rule as
+     * aggregateGroupDecision().
+     */
+    protected function wasApprovedWithChanges(DocumentWorkflowInstance $instance, WorkflowStage $stage): bool
+    {
+        return $this->aggregateGroupDecision($instance, $stage->groupSiblings()) === 'approved_with_changes';
+    }
+
+    /**
+     * Hand a pending task to someone else - e.g. the original reviewer is on leave.
+     * The old task is closed as 'reassigned' (kept for the audit trail) and a new
+     * one opened for $newUser with the same due date.
+     */
+    public function reassignTask(DocumentStageAssignee $task, User $newUser, User $actor, ?string $reason = null): DocumentStageAssignee
+    {
+        return DB::transaction(function () use ($task, $newUser, $actor, $reason) {
+            $task = DocumentStageAssignee::lockForUpdate()->findOrFail($task->id);
+
+            if ($task->status !== 'pending') {
+                throw ValidationException::withMessages(['reassign' => 'Only a pending task can be reassigned.']);
+            }
+            if ($newUser->id === $task->user_id) {
+                throw ValidationException::withMessages(['reassign' => 'That person already has this task.']);
+            }
+            if (! $newUser->is_active || ! $newUser->canRecordDecisions()) {
+                throw ValidationException::withMessages(['reassign' => "{$newUser->name} can't take approval tasks."]);
+            }
+            if ($task->instance->pendingAssignees()->where('workflow_stage_id', $task->workflow_stage_id)->where('user_id', $newUser->id)->exists()) {
+                throw ValidationException::withMessages(['reassign' => "{$newUser->name} already has a task at this stage."]);
+            }
+
+            $task->update(['status' => 'reassigned', 'acted_at' => now(), 'reassigned_by' => $actor->id, 'reassign_reason' => $reason]);
+
+            $new = DocumentStageAssignee::create([
+                'document_workflow_instance_id' => $task->document_workflow_instance_id,
+                'workflow_stage_id' => $task->workflow_stage_id,
+                'user_id' => $newUser->id,
+                'reassigned_from_id' => $task->id,
+                'reassigned_by' => $actor->id,
+                'reassign_reason' => $reason,
+                'status' => 'pending',
+                'assigned_at' => now(),
+                'due_at' => $task->due_at && $task->due_at->isFuture()
+                    ? $task->due_at
+                    : now()->addHours($task->instance->document->dueHoursForStage($task->stage)),
+            ]);
+
+            $this->audit->record(
+                action: 'TASK_REASSIGNED',
+                document: $task->instance->document,
+                instance: $task->instance,
+                stage: $task->stage,
+                actor: $actor,
+                description: '"' . $task->stage->name . '" reassigned from ' . $task->user?->name . ' to ' . $newUser->name . ($reason ? " - {$reason}" : '.'),
+            );
+
+            ApprovalAssigned::dispatch($task->instance, $task->stage, $newUser, $new);
+
+            return $new;
+        });
+    }
+
+    /**
+     * A new version was uploaded while the document is mid-review (allowed at every
+     * stage): reviewers from here on act on it.
+     */
+    public function adoptNewVersion(DocumentWorkflowInstance $instance, DocumentVersion $version): void
+    {
+        if ($instance->status === 'running') {
+            $instance->update(['document_version_id' => $version->id]);
+        }
     }
 
     protected function completeInstance(DocumentWorkflowInstance $instance, string $status, ?User $actor = null): void

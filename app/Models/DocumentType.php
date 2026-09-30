@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class DocumentType extends Model
 {
-    protected $fillable = ['name', 'code', 'allowed_extensions', 'max_file_size_kb', 'status'];
+    protected $fillable = ['name', 'code', 'channel', 'allowed_extensions', 'max_file_size_kb', 'status'];
 
     protected $casts = ['allowed_extensions' => 'array'];
 

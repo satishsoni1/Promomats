@@ -11,8 +11,8 @@ class Document extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'title', 'description', 'category', 'brand_id', 'document_type_id', 'products', 'countries', 'target_audience', 'reference_no', 'owner_id', 'workflow_template_id',
-        'allow_department_editing',
+        'title', 'description', 'category', 'brand_id', 'document_type_id', 'channel', 'products', 'countries', 'target_audience', 'reference_no', 'owner_id', 'workflow_template_id',
+        'allow_department_editing', 'is_placeholder', 'due_date',
         'project_id', 'cycle_id', 'status', 'start_date', 'expiry_date', 'aging_warning_days',
         'is_expired', 'is_aging_flagged', 'current_version_id',
         'legal_hold', 'legal_hold_reason', 'legal_hold_set_by', 'legal_hold_set_at',
@@ -21,6 +21,8 @@ class Document extends Model
     protected $casts = [
         'start_date' => 'date',
         'expiry_date' => 'date',
+        'due_date' => 'date',
+        'is_placeholder' => 'boolean',
         'status_changed_at' => 'datetime',
         'is_expired' => 'boolean',
         'is_aging_flagged' => 'boolean',
@@ -67,9 +69,104 @@ class Document extends Model
         'archived' => 'Archived',
     ];
 
+    // Finished material everyone may browse - the shared library. Anything still in
+    // a workflow is visible only to that workflow's stakeholders (see scopeVisibleTo).
+    public const LIBRARY_STATUSES = ['approved', 'approved_for_production', 'approved_for_distribution'];
+
+    public const CHANNEL_LABELS = ['print' => 'Print', 'digital' => 'Digital'];
+
     public function owner()
     {
         return $this->belongsTo(User::class, 'owner_id');
+    }
+
+    /**
+     * Documents $user may see (UAT feedback: "only the relevant stakeholders marked
+     * as part of the respective workflow should see a job; the larger repository
+     * can be in the library"). Visible when the user:
+     *  - is an admin, the owner, or an observer;
+     *  - has, or had, a task on it;
+     *  - is a planned stakeholder: named on one of its template's stages (directly
+     *    or through a role) - unless the owner picked specific people for that
+     *    stage, in which case only those people;
+     *  - has team work on it (Design Team) or is a department editor it's open to;
+     *  - or it's finished (approved) material - the library everyone may browse.
+     */
+    public function scopeVisibleTo($query, User $user)
+    {
+        if ($user->canAdminister()) {
+            return $query;
+        }
+
+        $uid = $user->id;
+        $roleIds = $user->roles->pluck('id')->all() ?: [0];
+
+        return $query->where(function ($w) use ($user, $uid, $roleIds) {
+            $w->whereIn('documents.status', self::LIBRARY_STATUSES)
+                ->orWhere('documents.owner_id', $uid)
+                ->orWhereExists(fn ($q) => $q->selectRaw(1)->from('document_watchers')
+                    ->whereColumn('document_watchers.document_id', 'documents.id')->where('document_watchers.user_id', $uid))
+                ->orWhereExists(fn ($q) => $q->selectRaw(1)->from('document_workflow_instances as wi')
+                    ->join('document_stage_assignees as sa', 'sa.document_workflow_instance_id', '=', 'wi.id')
+                    ->whereColumn('wi.document_id', 'documents.id')->where('sa.user_id', $uid))
+                ->orWhereExists(fn ($q) => $q->selectRaw(1)->from('document_stage_approver_selections as sel')
+                    ->whereColumn('sel.document_id', 'documents.id')->where('sel.user_id', $uid))
+                ->orWhereExists(fn ($q) => $q->selectRaw(1)->from('workflow_stages as ws')
+                    ->join('workflow_stage_approvers as wa', 'wa.workflow_stage_id', '=', 'ws.id')
+                    ->whereColumn('ws.workflow_template_id', 'documents.workflow_template_id')
+                    ->where(fn ($m) => $m->where('wa.user_id', $uid)->orWhereIn('wa.role_id', $roleIds))
+                    ->whereNotExists(fn ($s) => $s->selectRaw(1)->from('document_stage_approver_selections as sel2')
+                        ->whereColumn('sel2.document_id', 'documents.id')->whereColumn('sel2.workflow_stage_id', 'ws.id')))
+                ->orWhereExists(function ($q) use ($user, $uid) {
+                    $q->selectRaw(1)->from('document_work_tasks as wt')->whereColumn('wt.document_id', 'documents.id')
+                        ->where(function ($m) use ($user, $uid) {
+                            $m->where('wt.assigned_to', $uid);
+                            if ($user->isDesignTeam()) {
+                                $m->orWhere('wt.team', 'design');
+                            }
+                        });
+                });
+
+            if (filled($user->department)) {
+                $w->orWhere(fn ($q) => $q->where('documents.allow_department_editing', true)
+                    ->whereExists(fn ($o) => $o->selectRaw(1)->from('users as ou')
+                        ->whereColumn('ou.id', 'documents.owner_id')->where('ou.department', $user->department)));
+            }
+        });
+    }
+
+    public function isVisibleTo(User $user): bool
+    {
+        return $user->canAdminister()
+            || $this->owner_id === $user->id
+            || static::whereKey($this->id)->visibleTo($user)->exists();
+    }
+
+    public function workTasks()
+    {
+        return $this->hasMany(DocumentWorkTask::class)->latest();
+    }
+
+    public function stageSettings()
+    {
+        return $this->hasMany(DocumentStageSetting::class);
+    }
+
+    /**
+     * How long a stage gets on this document: the owner's per-stage choice, else
+     * the stage's own sla_hours, else the configured default (48h).
+     */
+    public function dueHoursForStage(WorkflowStage $stage): int
+    {
+        $override = ($this->relationLoaded('stageSettings') ? $this->stageSettings : $this->stageSettings())
+            ->where('workflow_stage_id', $stage->id)->first();
+
+        return (int) ($override?->due_hours ?? $stage->sla_hours ?? config('promomats.due_dates.default_stage_hours'));
+    }
+
+    public function channelLabel(): ?string
+    {
+        return self::CHANNEL_LABELS[$this->channel] ?? null;
     }
 
     public function workflowTemplate()

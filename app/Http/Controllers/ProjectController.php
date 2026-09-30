@@ -32,13 +32,13 @@ class ProjectController extends Controller
         // fetch with its overdue-relevant relations, both keyed back by project_id.
         $projectIds = $projects->pluck('id');
 
-        $statusCounts = Document::whereIn('project_id', $projectIds)
+        $statusCounts = Document::visibleTo(request()->user())->whereIn('project_id', $projectIds)
             ->selectRaw('project_id, status, count(*) as c')
             ->groupBy('project_id', 'status')
             ->get()
             ->groupBy('project_id');
 
-        $documentsByProject = Document::whereIn('project_id', $projectIds)
+        $documentsByProject = Document::visibleTo(request()->user())->whereIn('project_id', $projectIds)
             ->with('activeWorkflowInstance.pendingAssignees')
             ->get()
             ->groupBy('project_id');
@@ -107,6 +107,7 @@ class ProjectController extends Controller
                 : $project->currentCycle());
 
         $documents = ($selectedCycle ? $selectedCycle->documents() : $project->documents())
+            ->visibleTo(request()->user())
             ->with(['owner', 'currentVersion', 'cycle'])
             ->latest()
             ->paginate(20);

@@ -13,6 +13,7 @@
                         <tr>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Name</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Code</th>
+                            <th class="px-4 py-3 text-left font-medium text-gray-500">Classification</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Allowed Extensions</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Max Size</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Documents</th>
@@ -25,6 +26,7 @@
                             <tr>
                                 <td class="px-4 py-3 font-medium text-gray-900">{{ $type->name }}</td>
                                 <td class="px-4 py-3 text-gray-500 font-mono text-xs">{{ $type->code }}</td>
+                                <td class="px-4 py-3 text-gray-600">{{ \App\Models\Document::CHANNEL_LABELS[$type->channel] ?? 'File format' }}</td>
                                 <td class="px-4 py-3 text-gray-600">{{ $type->allowed_extensions ? implode(', ', $type->allowed_extensions) : 'Any' }}</td>
                                 <td class="px-4 py-3 text-gray-600">{{ $type->max_file_size_kb ? number_format($type->max_file_size_kb) . ' KB' : 'Unlimited' }}</td>
                                 <td class="px-4 py-3 text-gray-600">{{ $type->documents_count }}</td>
@@ -56,6 +58,14 @@
                     <div>
                         <x-input-label for="code" value="Code (optional)" />
                         <x-text-input id="code" name="code" class="mt-1 block w-full" placeholder="auto-generated" />
+                    </div>
+                    <div>
+                        <x-input-label for="channel" value="Classification" />
+                        <select id="channel" name="channel" class="mt-1 block w-full border-gray-300 rounded-md">
+                            <option value="print">Print collateral</option>
+                            <option value="digital">Digital collateral</option>
+                            <option value="">File format (PDF, JPG…)</option>
+                        </select>
                     </div>
                     <div>
                         <x-input-label for="allowed_extensions" value="Allowed Extensions" />

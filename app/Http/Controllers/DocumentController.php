@@ -38,7 +38,10 @@ class DocumentController extends Controller
     public function index(Request $request)
     {
         $documents = Document::query()
-            ->with(['owner', 'currentVersion', 'workflowTemplate'])
+            ->visibleTo($request->user())
+            ->with(['owner', 'currentVersion', 'workflowTemplate', 'documentType'])
+            ->when($request->filled('channel'), fn ($q) => $q->where('channel', $request->channel))
+            ->when($request->filled('type'), fn ($q) => $q->where('document_type_id', $request->type))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->status))
             ->when($request->filled('category'), fn ($q) => $q->where('category', $request->category))
             ->when($request->filled('mine'), fn ($q) => $q->where('owner_id', $request->user()->id))
@@ -53,8 +56,8 @@ class DocumentController extends Controller
             ->withQueryString();
 
         // Sidebar filter facets: live counts per status/category, PromoMats-library style.
-        $statusCounts = Document::selectRaw('status, count(*) as c')->groupBy('status')->pluck('c', 'status');
-        $categoryCounts = Document::whereNotNull('category')->selectRaw('category, count(*) as c')->groupBy('category')->pluck('c', 'category');
+        $statusCounts = Document::visibleTo($request->user())->selectRaw('status, count(*) as c')->groupBy('status')->pluck('c', 'status');
+        $categoryCounts = Document::visibleTo($request->user())->whereNotNull('category')->selectRaw('category, count(*) as c')->groupBy('category')->pluck('c', 'category');
         $view = $request->get('view', 'table') === 'grid' ? 'grid' : 'table';
 
         return view('documents.index', compact('documents', 'statusCounts', 'categoryCounts', 'view'));
@@ -62,6 +65,8 @@ class DocumentController extends Controller
 
     public function create()
     {
+        $this->authorize('create', Document::class);
+
         $templates = WorkflowTemplate::shared()
             ->where('is_active', true)
             ->with(['stages.approvers.role', 'stages.approvers.user'])
@@ -77,6 +82,10 @@ class DocumentController extends Controller
         $candidateUserIds = $templates->flatMap->stages->flatMap->approvers
             ->flatMap(fn ($a) => $a->resolveUserIds())->unique();
         $userNames = User::whereIn('id', $candidateUserIds)->pluck('name', 'id');
+        // Brand Managers are never handed approval tasks, so they're not offered.
+        $bmOnlyIds = User::with('roles')->whereIn('id', $candidateUserIds)->get()
+            ->filter(fn ($u) => $u->isBrandManagerOnly())->pluck('id');
+        $defaultDueHours = config('promomats.due_dates.default_stage_hours');
 
         $templateApproverOptions = $templates
             ->where('owner_can_customize_workflow', true)
@@ -88,7 +97,10 @@ class DocumentController extends Controller
                 'parallel_group' => $s->parallel_group,
                 'approval_mode' => $s->approval_mode,
                 'is_final' => (bool) $s->is_final_distribution_stage,
+                'is_draft' => $s->isDraft(),
+                'due_hours' => $s->sla_hours ?? $defaultDueHours,
                 'candidates' => $s->candidateUserIds()
+                    ->reject(fn ($uid) => $bmOnlyIds->contains($uid))
                     ->map(fn ($uid) => ['id' => $uid, 'name' => $userNames[$uid] ?? "User #{$uid}"])
                     ->values(),
             ])->values()]);
@@ -96,7 +108,10 @@ class DocumentController extends Controller
         // For the "add a stage" picker in the structural editor: every active user
         // and every role, so a brand-new stage can be assigned to a role (whoever
         // holds it at run time) or to named people.
-        $allUsers = User::where('is_active', true)->orderBy('name')->get(['id', 'name']);
+        $allUsers = User::with('roles')->where('is_active', true)->orderBy('name')->get(['id', 'name'])
+            ->reject(fn ($u) => $u->isBrandManagerOnly())
+            ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])
+            ->values();
         $allRoles = Role::orderBy('name')->get(['id', 'name']);
         // Active workflow_rules, shaped for the create form's Alpine component to
         // do the same brand+type -> workflow lookup WorkflowResolver does
@@ -105,17 +120,20 @@ class DocumentController extends Controller
             ->orderBy('priority')
             ->get(['workflow_template_id', 'brand_id', 'document_type_id', 'department', 'priority']);
 
-        return view('documents.create', compact('templates', 'projects', 'brands', 'documentTypes', 'workflowRules', 'templateApproverOptions', 'allUsers', 'allRoles'));
+        return view('documents.create', compact('templates', 'projects', 'brands', 'documentTypes', 'workflowRules', 'templateApproverOptions', 'allUsers', 'allRoles', 'defaultDueHours'));
     }
 
     public function store(Request $request)
     {
+        $this->authorize('create', Document::class);
+
         $validated = $request->validate([
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'category' => ['nullable', 'string', 'max:120'],
             'brand_id' => ['nullable', 'exists:brands,id'],
             'document_type_id' => ['nullable', 'exists:document_types,id'],
+            'channel' => ['nullable', 'in:print,digital'],
             'products' => ['nullable', 'string', 'max:500'],
             'countries' => ['nullable', 'string', 'max:500'],
             'target_audience' => ['nullable', 'string', 'in:' . implode(',', array_keys(\App\Support\TargetAudience::LABELS))],
@@ -137,15 +155,24 @@ class DocumentController extends Controller
             'project_id' => ['nullable', 'exists:projects,id'],
             'start_date' => ['nullable', 'date'],
             'expiry_date' => ['nullable', 'date', 'after_or_equal:start_date'],
+            // The job's own target date - deliberately allowed past the expiry date.
+            'due_date' => ['nullable', 'date'],
+            // Per-stage due period in hours (default 48), { "<workflow_stage_id>": hours }.
+            'stage_due_hours' => ['nullable', 'array'],
+            'stage_due_hours.*' => ['nullable', 'integer', 'min:1', 'max:2160'],
+            // Placeholder: start the job without a file; the Design Team uploads the artwork.
+            'is_placeholder' => ['nullable', 'boolean'],
+            'design_instructions' => ['nullable', 'string', 'max:5000'],
             'aging_warning_days' => ['nullable', 'integer', 'min:1', 'max:365'],
             // Any file type accepted; adjust `max` (in KB) to your infra's real ceiling.
             // For very large files (100MB+), pair this with resumable/chunked upload on the frontend.
-            'file' => ['required', 'file', 'max:512000'], // 500MB via standard form upload
+            'file' => ['required_unless:is_placeholder,1', 'nullable', 'file', 'max:512000'], // 500MB via standard form upload
         ]);
 
-        $documentType = $validated['document_type_id'] ? DocumentType::find($validated['document_type_id']) : null;
+        $isPlaceholder = (bool) ($validated['is_placeholder'] ?? false);
+        $documentType = ! empty($validated['document_type_id']) ? DocumentType::find($validated['document_type_id']) : null;
 
-        if ($documentType) {
+        if ($documentType && $request->hasFile('file')) {
             $extension = $request->file('file')->getClientOriginalExtension();
             if (! $documentType->acceptsExtension($extension)) {
                 return back()->withErrors(['file' => "\"{$documentType->name}\" only accepts: " . implode(', ', $documentType->allowed_extensions)])->withInput();
@@ -158,8 +185,19 @@ class DocumentController extends Controller
         $workflowTemplateId = $validated['workflow_template_id'] ?? null;
 
         if (! $workflowTemplateId) {
-            $brand = $validated['brand_id'] ? Brand::find($validated['brand_id']) : null;
+            $brand = ! empty($validated['brand_id']) ? Brand::find($validated['brand_id']) : null;
             $resolved = $this->workflowResolver->resolve($brand, $documentType, $request->user()->department);
+
+            // A collateral type (LBL, Dangler, ...) says what the piece is, not its
+            // file format - when no rule covers it, route by the file's format type
+            // (PDF/JPG/GIF vs Word/Video/PPT), exactly as those uploads always were.
+            if (! $resolved && $request->hasFile('file')) {
+                $extension = strtolower($request->file('file')->getClientOriginalExtension());
+                $formatType = DocumentType::active()->whereNull('channel')->get()
+                    ->first(fn ($t) => ! empty($t->allowed_extensions) && $t->acceptsExtension($extension));
+                $resolved = $formatType ? $this->workflowResolver->resolve($brand, $formatType, $request->user()->department) : null;
+            }
+
             $workflowTemplateId = $resolved?->id;
         }
 
@@ -184,6 +222,9 @@ class DocumentController extends Controller
             'category' => $validated['category'] ?? null,
             'brand_id' => $validated['brand_id'] ?? null,
             'document_type_id' => $validated['document_type_id'] ?? null,
+            'channel' => $validated['channel'] ?? $documentType?->channel,
+            'is_placeholder' => $isPlaceholder,
+            'due_date' => $validated['due_date'] ?? null,
             'products' => $this->splitTags($validated['products'] ?? null),
             'countries' => $countries,
             'target_audience' => $validated['target_audience'] ?? null,
@@ -230,6 +271,20 @@ class DocumentController extends Controller
             );
         }
 
+        $this->saveStageDueHours($document, $validated['stage_due_hours'] ?? []);
+
+        if ($isPlaceholder && ! $request->hasFile('file')) {
+            app(\App\Services\WorkTaskService::class)->requestArtwork(
+                document: $document,
+                requestedBy: $request->user(),
+                instructions: $validated['design_instructions'] ?? null,
+                dueAt: ! empty($validated['due_date']) ? \Illuminate\Support\Carbon::parse($validated['due_date'])->endOfDay() : now()->addHours(config('promomats.due_dates.default_stage_hours')),
+            );
+
+            return redirect()->route('documents.show', $document)
+                ->with('status', 'Placeholder created and sent to the Design Team to upload the artwork. You\'ll be notified when it\'s in.');
+        }
+
         $version = $this->versionService->storeNewVersion(
             document: $document,
             file: $request->file('file'),
@@ -240,6 +295,38 @@ class DocumentController extends Controller
         $this->audit->record(action: 'VERSION_CREATED', document: $document, version: $version, actor: $request->user());
 
         return redirect()->route('documents.show', $document)->with('status', 'Document uploaded. Submit it for review when ready.');
+    }
+
+    /**
+     * The task owner's per-stage due periods (hours). Only values that differ from
+     * the stage's own default are stored; blanks fall back to it.
+     *
+     * @param  array<int|string, int|string|null>  $raw
+     */
+    protected function saveStageDueHours(Document $document, array $raw): void
+    {
+        $stageIds = WorkflowStage::where('workflow_template_id', $document->workflow_template_id)->pluck('sla_hours', 'id');
+        $codes = WorkflowStage::whereIn('id', array_keys($raw))->pluck('code', 'id');
+        $default = config('promomats.due_dates.default_stage_hours');
+
+        foreach ($raw as $stageId => $hours) {
+            $hours = (int) $hours;
+            if ($hours < 1) {
+                continue;
+            }
+
+            // After a structural edit the document runs a private copy: map the
+            // shared template's stage onto the copy's stage with the same code.
+            $targetId = $stageIds->has((int) $stageId)
+                ? (int) $stageId
+                : WorkflowStage::where('workflow_template_id', $document->workflow_template_id)->where('code', $codes[$stageId] ?? null)->value('id');
+
+            if (! $targetId || $hours === (int) ($stageIds[$targetId] ?? $default)) {
+                continue;
+            }
+
+            $document->stageSettings()->updateOrCreate(['workflow_stage_id' => $targetId], ['due_hours' => $hours]);
+        }
     }
 
     public function show(Document $document)
@@ -255,9 +342,15 @@ class DocumentController extends Controller
             'activeWorkflowInstance.currentStage.approvers',
             'activeWorkflowInstance.pendingAssignees.user',
             'activeWorkflowInstance.pendingAssignees.stage',
+            'activeWorkflowInstance.pendingAssignees.reassignedBy',
+            'activeWorkflowInstance.resumeAtStage',
+            'workTasks.assignee',
+            'workTasks.requester',
+            'workTasks.completer',
             'workflowTemplate.stages',
             'comments',
-            'pdfAnnotations',
+            'pdfAnnotations.resolver',
+            'pdfAnnotations.version',
             'videoAnnotations',
             'claims.references',
             'referenceAttachments.uploader',
@@ -308,13 +401,29 @@ class DocumentController extends Controller
                     'id' => $c->id,
                     'x_position' => $c->x_position,
                     'y_position' => $c->y_position,
+                    'selected_text' => $c->selected_text,
+                    'replacement_text' => $c->replacement_text,
+                    'highlight_rects' => $c->highlight_rects,
                     'body' => $c->body,
+                    'edited' => $c->edited_at !== null,
+                    'can_edit' => $c->user_id === auth()->id(),
                     'created_at' => $c->created_at->diffForHumans(),
+                    'created_at_iso' => $c->created_at->toIso8601String(),
                     'author' => ['name' => $c->author?->name],
+                    'resolved' => $c->resolved_at !== null,
+                    'resolved_by' => $c->resolver?->name,
+                    // Set only when the pin was made on an earlier version than the one
+                    // on screen, so the viewer can flag that it may have drifted.
+                    'from_version' => $c->version && $c->document_version_id !== $document->current_version_id
+                        ? $c->version->version_no : null,
+                    'can_resolve' => in_array(auth()->id(), [$c->user_id, $document->owner_id], true) || auth()->user()->can('access-admin'),
                     'replies' => $c->replies->map(fn ($r) => [
                         'id' => $r->id,
                         'body' => $r->body,
+                        'edited' => $r->edited_at !== null,
+                        'can_edit' => $r->user_id === auth()->id(),
                         'created_at' => $r->created_at->diffForHumans(),
+                        'created_at_iso' => $r->created_at->toIso8601String(),
                         'author' => ['name' => $r->author?->name],
                     ]),
                 ]),
@@ -364,7 +473,8 @@ class DocumentController extends Controller
             'document', 'availableClaims', 'availableModules', 'suggestedClaims', 'pdfAnnotationsByPage',
             'videoAnnotations', 'latestComplianceInsight', 'latestRevisionInsight', 'latestRetrievalRequest',
             'claimReferenceMappingsByPage', 'availableProjects', 'observableUsers'
-        ))->with('aiAvailable', $this->ai->isAvailable());
+        ))->with('aiAvailable', $this->ai->isAvailable())
+            ->with('wordEditorRole', WordReviewController::editorRole($document, request()->user()));
     }
 
     /**
@@ -413,6 +523,9 @@ class DocumentController extends Controller
 
             $this->engine->resumeAfterRevision($instance, $newVersion);
         } else {
+            if (! $document->currentVersion) {
+                return back()->withErrors(['file' => 'This placeholder has no artwork yet - it can be submitted once the Design Team (or you) uploads the file.']);
+            }
             $this->engine->start($document, $document->currentVersion, $request->user());
         }
 
@@ -437,6 +550,21 @@ class DocumentController extends Controller
         );
 
         $this->audit->record(action: 'VERSION_CREATED', document: $document, version: $version, actor: $request->user(), description: $request->change_notes);
+
+        // Uploading is allowed at every stage: whoever reviews from here on sees
+        // the new file.
+        if ($document->activeWorkflowInstance && $document->status === 'in_review') {
+            $this->engine->adoptNewVersion($document->activeWorkflowInstance, $version);
+        }
+
+        // The artwork for a placeholder has arrived - whoever uploaded it.
+        if ($document->is_placeholder) {
+            $document->update(['is_placeholder' => false]);
+            $document->workTasks()->open()->where('type', 'artwork')->update([
+                'status' => 'completed', 'completed_version_id' => $version->id,
+                'completed_by' => $request->user()->id, 'completed_at' => now(),
+            ]);
+        }
 
         $this->notifyStakeholders($document, 'version_uploaded', $request->user());
 
@@ -467,6 +595,8 @@ class DocumentController extends Controller
      */
     public function viewVersion(\App\Models\DocumentVersion $version)
     {
+        $this->authorize('view', $version->document);
+
         $contentType = match (true) {
             $version->isPdf() => 'application/pdf',
             $version->isImage() => $this->safeImageMimeType($version),
@@ -806,15 +936,12 @@ class DocumentController extends Controller
                 ]);
             }
 
-            $candidates = $stage->candidateUserIds();
             $chosen = collect($userIds)->map(fn ($id) => (int) $id)->unique()->values();
-            $invalid = $chosen->diff($candidates);
 
-            if ($invalid->isNotEmpty()) {
-                throw ValidationException::withMessages([
-                    'stage_approvers' => "\"{$stage->name}\" was given an approver who isn't one of its candidates.",
-                ]);
-            }
+            // The task owner may choose beyond the stage's usual people (different
+            // brands have different Medical / Legal / Regulatory stakeholders) -
+            // anyone active who is allowed to take approval tasks.
+            $this->assertAssignable($chosen, "\"{$stage->name}\"", 'stage_approvers');
 
             $picks[$stage->id] = $chosen->all();
         }
@@ -897,10 +1024,10 @@ class DocumentController extends Controller
             $dirty = ($row['approversDirty'] ?? false) === true;
 
             if ($dirty) {
-                $invalid = $userIds->diff($stage->candidateUserIds());
-                if ($userIds->isEmpty() || $invalid->isNotEmpty()) {
-                    throw ValidationException::withMessages(['workflow_edit' => "\"{$stage->name}\" must keep at least one of its own candidate approvers."]);
+                if ($userIds->isEmpty()) {
+                    throw ValidationException::withMessages(['workflow_edit' => "\"{$stage->name}\" needs at least one approver."]);
                 }
+                $this->assertAssignable($userIds, "\"{$stage->name}\"", 'workflow_edit');
             }
 
             $out[] = ['type' => 'existing', 'code' => $stage->code, 'name' => $name, 'approvers_dirty' => $dirty, 'user_ids' => $userIds->all()];
@@ -1029,6 +1156,25 @@ class DocumentController extends Controller
                 'outcome_type' => $stage->id === $firstId ? 'terminate_rejected' : 'return_to_owner',
                 'resume_at_stage_id' => $stage->id === $firstId ? null : $stage->id,
             ]);
+        }
+    }
+
+    /**
+     * Every chosen person must be an active user who may take approval tasks
+     * (Brand Managers start and assign jobs but never approve).
+     *
+     * @param  \Illuminate\Support\Collection<int, int>  $userIds
+     */
+    protected function assertAssignable($userIds, string $label, string $errorKey): void
+    {
+        $users = User::with('roles')->whereIn('id', $userIds)->where('is_active', true)->get();
+
+        if ($users->count() !== $userIds->count()) {
+            throw ValidationException::withMessages([$errorKey => "{$label} was given an unknown or inactive person."]);
+        }
+
+        if ($bm = $users->first(fn ($u) => $u->isBrandManagerOnly())) {
+            throw ValidationException::withMessages([$errorKey => "{$label}: {$bm->name} is a Brand Manager and can't approve or reject."]);
         }
     }
 

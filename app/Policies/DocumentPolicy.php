@@ -8,16 +8,31 @@ use App\Models\User;
 class DocumentPolicy
 {
     /**
-     * Documents behave like a shared library across the org (search, the claims
-     * library, and the reference library all work the same way) - any
-     * authenticated user can look one up. This is the single place that rule
-     * lives, so tightening it later (e.g. department-scoped visibility, or
-     * hiding drafts from non-owners) is a one-line change here rather than a
-     * hunt through every controller that touches a Document.
+     * A job in a workflow is visible only to its stakeholders; finished (approved)
+     * material is the shared library everyone may browse. The rule itself lives in
+     * Document::scopeVisibleTo() so lists and single pages always agree.
      */
     public function view(User $user, Document $document): bool
     {
-        return true;
+        return $document->isVisibleTo($user);
+    }
+
+    /**
+     * Starting a new job / uploading a file. MLR reviewers are review-only (UAT
+     * feedback: "remove document upload access for the MLR team").
+     */
+    public function create(User $user): bool
+    {
+        return $user->canUploadDocuments();
+    }
+
+    /**
+     * Handing a pending task to another stakeholder, choosing stakeholders and due
+     * dates, and sending rework to the Design Team: the task owner (or an admin).
+     */
+    public function manageTasks(User $user, Document $document): bool
+    {
+        return $user->id === $document->owner_id || $user->can('access-admin');
     }
 
     /**
@@ -40,10 +55,20 @@ class DocumentPolicy
      */
     public function uploadVersion(User $user, Document $document): bool
     {
+        if ($document->legal_hold || ! $user->canUploadDocuments()) {
+            return false;
+        }
+
         return $user->id === $document->owner_id
             || $user->can('access-admin')
             || $user->hasRole('agency')
-            || $document->openToDepartmentEditor($user);
+            || $document->openToDepartmentEditor($user)
+            // "Option of uploading a revised/new document at all stages": whoever
+            // currently holds a stage (other than MLR, excluded above) ...
+            || $document->activeWorkflowInstance?->pendingAssignees()->where('user_id', $user->id)->exists()
+            // ... and the Design Team, who produce the artwork and its revisions.
+            || $user->isDesignTeam()
+            || $document->workTasks()->open()->where('assigned_to', $user->id)->exists();
     }
 
     /**

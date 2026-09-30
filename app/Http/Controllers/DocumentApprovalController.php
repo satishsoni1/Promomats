@@ -26,22 +26,25 @@ class DocumentApprovalController extends Controller
     }
 
     /**
-     * 21 CFR Part 11 requires an electronic signature to be executed with two
-     * distinct identification components - being logged in already satisfies "who
-     * you are", but a signature also needs an *act of signing*, not just an
-     * already-open session someone could walk up to. Re-confirming the password
-     * here, at the moment of decision, is that second component; recordDecision()
-     * then stores the signer's printed name as it stood at that instant.
+     * Record the signed-in user's decision. recordDecision() stores the signer's
+     * printed name, time and IP as it stood at that instant.
+     *
+     * Re-entering the password at the moment of signing (the 21 CFR Part 11 "act of
+     * signing") is optional - config('promomats.approvals.require_password'). It is
+     * off by default because users are already signed in and were being asked for
+     * a password they had already given (UAT feedback).
      */
     public function act(Request $request, DocumentWorkflowInstance $instance)
     {
+        $requirePassword = config('promomats.approvals.require_password');
+
         $validated = $request->validate([
             'decision' => ['required', 'in:approved,approved_with_changes,not_approved'],
             'comments' => ['nullable', 'string', 'max:5000'],
-            'password' => ['required', 'string'],
+            'password' => [$requirePassword ? 'required' : 'nullable', 'string'],
         ]);
 
-        if (! Hash::check($validated['password'], $request->user()->password)) {
+        if ($requirePassword && ! Hash::check($validated['password'], $request->user()->password)) {
             throw ValidationException::withMessages([
                 'password' => 'Incorrect password - your decision was not recorded. Re-enter your password to sign.',
             ]);

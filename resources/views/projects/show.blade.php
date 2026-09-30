@@ -166,7 +166,7 @@
                             @csrf
                             <input type="text" name="title" placeholder="File title (optional — defaults to the file name)" class="block w-full text-sm border-gray-300 rounded-md">
                             <input type="text" name="category" placeholder="Category (optional)" class="block w-full text-sm border-gray-300 rounded-md">
-                            <input type="file" name="file" required class="block w-full text-sm">
+                            <x-file-dropzone name="file" required />
                             <x-primary-button>Add to Project Library</x-primary-button>
                         </form>
 

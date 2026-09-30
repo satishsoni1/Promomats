@@ -112,22 +112,39 @@ class StageApproverSelectionTest extends TestCase
     {
         [$template, $stage, $pool] = $this->poolTemplate();
         $owner = User::factory()->create();
-        $outsider = User::factory()->create();
+        $inactive = User::factory()->create(['is_active' => false]);
+        $brandManager = User::factory()->create();
+        $brandManager->roles()->attach(\App\Models\Role::firstOrCreate(['slug' => 'brand-manager'], ['name' => 'Brand Manager'])->id);
 
-        // A pick outside the stage's candidate pool is rejected, nothing created.
-        $this->actingAs($owner)
-            ->from(route('documents.create'))
-            ->post(route('documents.store'), [
-                'title' => 'Rejected upload',
-                'brand_id' => '',
-                'document_type_id' => '',
-                'workflow_template_id' => $template->id,
-                'stage_approvers' => [(string) $stage->id => [(string) $outsider->id]],
-                'file' => UploadedFile::fake()->create('a.pdf', 10, 'application/pdf'),
-            ])
-            ->assertSessionHasErrors('stage_approvers');
+        // An inactive person, or a Brand Manager (who never approves), is rejected.
+        foreach ([$inactive, $brandManager] as $bad) {
+            $this->actingAs($owner)
+                ->from(route('documents.create'))
+                ->post(route('documents.store'), [
+                    'title' => 'Rejected upload',
+                    'brand_id' => '',
+                    'document_type_id' => '',
+                    'workflow_template_id' => $template->id,
+                    'stage_approvers' => [(string) $stage->id => [(string) $bad->id]],
+                    'file' => UploadedFile::fake()->create('a.pdf', 10, 'application/pdf'),
+                ])
+                ->assertSessionHasErrors('stage_approvers');
+        }
 
         $this->assertDatabaseCount('documents', 0);
+
+        // The task owner may pick beyond the stage's usual pool (UAT feedback: each
+        // brand has its own Medical / Legal / Regulatory stakeholders).
+        $outsider = User::factory()->create();
+        $this->actingAs($owner)
+            ->post(route('documents.store'), [
+                'title' => 'Outside pick',
+                'workflow_template_id' => $template->id,
+                'stage_approvers' => [(string) $stage->id => [(string) $outsider->id]],
+                'file' => UploadedFile::fake()->create('c.pdf', 10, 'application/pdf'),
+            ])
+            ->assertRedirect();
+        $this->assertDatabaseHas('document_stage_approver_selections', ['user_id' => $outsider->id, 'workflow_stage_id' => $stage->id]);
 
         // A pick from within the pool is stored against the new document.
         $this->actingAs($owner)

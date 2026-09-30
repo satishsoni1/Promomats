@@ -78,10 +78,12 @@ class WorkflowTemplateController extends Controller
 
         $validated = $request->validate([
             'owner_can_customize_workflow' => ['sometimes', 'boolean'],
+            'awc_resume' => ['sometimes', 'in:next_stage,same_stage'],
         ]);
 
         $workflow->update([
             'owner_can_customize_workflow' => (bool) ($validated['owner_can_customize_workflow'] ?? false),
+            'awc_resume' => $validated['awc_resume'] ?? $workflow->awc_resume ?? 'next_stage',
         ]);
 
         return back()->with('status', 'Workflow settings saved.');
@@ -96,6 +98,7 @@ class WorkflowTemplateController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'code' => ['required', 'string', 'max:60'],
             'approval_mode' => ['required', 'in:any_one,all_required,majority'],
+            'stage_type' => ['nullable', 'in:review,draft'],
             'quorum_count' => ['nullable', 'integer', 'min:1'],
             'condition_field' => ['nullable', 'in:brand_id,document_type_id,category,target_audience,department'],
             'condition_operator' => ['nullable', 'in:equals,not_equals,in,not_in'],
@@ -128,6 +131,7 @@ class WorkflowTemplateController extends Controller
                 'sequence_no' => $nextSeq,
                 'name' => $validated['name'],
                 'code' => $validated['code'],
+                'stage_type' => $validated['stage_type'] ?? 'review',
                 'approval_mode' => $validated['approval_mode'],
                 'quorum_count' => $validated['approval_mode'] === 'majority' ? ($validated['quorum_count'] ?? null) : null,
                 'condition_json' => $conditionJson,

@@ -42,10 +42,15 @@
                     <label class="flex items-start gap-3 text-sm">
                         <input type="checkbox" name="owner_can_customize_workflow" value="1" @checked($workflow->owner_can_customize_workflow) class="mt-0.5 rounded border-gray-300 text-brand-600">
                         <span>
-                            <span class="font-medium text-gray-800">Let the document owner pick approvers at upload</span>
-                            <span class="block text-xs text-gray-500 mt-0.5">On the upload form the owner sees each stage and, where a stage has several candidate people, can send it to one named person. They can only narrow the candidates this template already defines — never add anyone new.</span>
+                            <span class="font-medium text-gray-800">Let the task owner pick stakeholders at upload</span>
+                            <span class="block text-xs text-gray-500 mt-0.5">On the upload form the owner picks the person for each stage (e.g. Jalba or Rathna), can add someone outside the stage's usual people, and sets each stage's due time (48h default).</span>
                         </span>
                     </label>
+                    <div class="mt-4 text-sm">
+                        <p class="font-medium text-gray-800">After "Approved with changes" and the revision is uploaded</p>
+                        <label class="flex items-center gap-2 mt-1 text-gray-600"><input type="radio" name="awc_resume" value="next_stage" @checked(($workflow->awc_resume ?? 'next_stage') === 'next_stage') class="text-brand-600"> Move on to the next stage (the stage already approved it)</label>
+                        <label class="flex items-center gap-2 mt-1 text-gray-600"><input type="radio" name="awc_resume" value="same_stage" @checked($workflow->awc_resume === 'same_stage') class="text-brand-600"> Send it back to the same stage for another look</label>
+                    </div>
                     <button class="mt-3 text-xs px-3 py-1.5 bg-brand-600 text-white rounded-md hover:bg-brand-700">Save settings</button>
                 </form>
             </div>
@@ -149,8 +154,15 @@
                                 </div>
                             </div>
                             <div>
-                                <x-input-label for="sla_hours" value="SLA (hours, optional)" />
-                                <x-text-input type="number" id="sla_hours" name="sla_hours" class="mt-1 block w-full" />
+                                <x-input-label for="sla_hours" value="Due time (hours, default 48)" />
+                                <x-text-input type="number" id="sla_hours" name="sla_hours" class="mt-1 block w-full" placeholder="48" />
+                            </div>
+                            <div>
+                                <x-input-label for="stage_type" value="Stage type" />
+                                <select id="stage_type" name="stage_type" class="mt-1 block w-full border-gray-300 rounded-md">
+                                    <option value="review">Review / approval</option>
+                                    <option value="draft">Draft (work step — submitted on, not approved)</option>
+                                </select>
                             </div>
                         </div>
         <div class="flex items-center gap-6 text-sm">

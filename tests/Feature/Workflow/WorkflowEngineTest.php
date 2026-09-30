@@ -191,7 +191,13 @@ class WorkflowEngineTest extends TestCase
 
     // --- Revision loop: AwC routes back, resume picks up where it left off ------
 
-    public function test_approved_with_changes_routes_back_and_resubmission_resumes_at_the_sending_stage(): void
+    /**
+     * Three-stage chain wired the way every template now is: approved -> next,
+     * Approved with changes / Not Approved -> back to the task owner.
+     *
+     * @return array{0: WorkflowTemplate, 1: WorkflowStage, 2: WorkflowStage, 3: WorkflowStage, 4: User, 5: User, 6: User, 7: User}
+     */
+    protected function ownerRevisionChain(): array
     {
         $template = $this->makeTemplate('Revision', 'REV');
         $contentMgr = $this->stageFor($template, 1, 'Content Manager Review');
@@ -202,63 +208,130 @@ class WorkflowEngineTest extends TestCase
         $this->approvedTransition($medical, $final);
         $this->approvedTransition($final, null);
 
-        // Medical: Approved with Changes -> back to Content Manager; once Content
-        // Manager re-approves, resume at Medical (the stage that sent it back).
-        WorkflowTransition::create([
-            'workflow_stage_id' => $medical->id,
-            'decision' => 'approved_with_changes',
-            'outcome_type' => 'return_to_stage',
-            'target_stage_id' => $contentMgr->id,
-            'resume_at_stage_id' => $medical->id,
-        ]);
-        // Content Manager's own "approved" transition when re-entered for a revision
-        // pass is still just "go to Medical" per the transition above - the engine's
-        // resumeAfterRevision() is what actually returns to $medical directly, so no
-        // extra transition row is needed for the resume itself.
+        foreach ([$medical, $final] as $stage) {
+            foreach (['approved_with_changes', 'not_approved'] as $decision) {
+                WorkflowTransition::create([
+                    'workflow_stage_id' => $stage->id,
+                    'decision' => $decision,
+                    'outcome_type' => 'return_to_owner',
+                    'resume_at_stage_id' => $stage->id,
+                ]);
+            }
+        }
 
-        $owner = User::factory()->create();
-        $contentMgrUser = User::factory()->create();
-        $medicalUser = User::factory()->create();
-        $finalUser = User::factory()->create();
-        WorkflowStageApprover::create(['workflow_stage_id' => $contentMgr->id, 'user_id' => $contentMgrUser->id]);
-        WorkflowStageApprover::create(['workflow_stage_id' => $medical->id, 'user_id' => $medicalUser->id]);
-        WorkflowStageApprover::create(['workflow_stage_id' => $final->id, 'user_id' => $finalUser->id]);
+        $users = [];
+        foreach ([$contentMgr, $medical, $final] as $stage) {
+            $users[] = $u = User::factory()->create();
+            WorkflowStageApprover::create(['workflow_stage_id' => $stage->id, 'user_id' => $u->id]);
+        }
 
-        $document = $this->makeDocument($template, $owner);
-        $instance = $this->engine->start($document, $document->currentVersion, $owner);
+        return [$template, $contentMgr, $medical, $final, User::factory()->create(), ...$users];
+    }
 
-        $instance = $this->engine->recordDecision($instance, $contentMgrUser, 'approved');
-        $this->assertSame($medical->id, $instance->current_stage_id);
-
-        $instance = $this->engine->recordDecision($instance, $medicalUser, 'approved_with_changes', 'Please fix the dosing claim on page 2.');
-
-        $instance = $instance->fresh();
-        $this->assertSame($contentMgr->id, $instance->current_stage_id, 'AwC should route back to Content Manager.');
-        $this->assertSame($medical->id, $instance->resume_at_stage_id);
-        $this->assertSame('approved_with_changes_pending', $document->fresh()->status);
-
-        // Owner uploads V2 and resubmits.
-        $v2 = app(DocumentVersionService::class)->storeNewVersion(
+    protected function uploadRevision(Document $document, User $owner)
+    {
+        return app(DocumentVersionService::class)->storeNewVersion(
             document: $document,
             file: UploadedFile::fake()->create('artwork-v2.pdf', 10, 'application/pdf'),
             uploader: $owner,
-            changeNotes: 'Fixed dosing claim per Medical feedback.',
+            changeNotes: 'Fixed per review feedback.',
         );
+    }
 
-        $this->engine->resumeAfterRevision($instance, $v2);
+    public function test_approved_with_changes_goes_to_the_owner_and_the_revision_moves_on_to_the_next_stage(): void
+    {
+        [$template, $contentMgr, $medical, $final, $owner, $cmUser, $medicalUser, $finalUser] = $this->ownerRevisionChain();
 
+        $document = $this->makeDocument($template, $owner);
+        $instance = $this->engine->start($document, $document->currentVersion, $owner);
+        $instance = $this->engine->recordDecision($instance, $cmUser, 'approved');
+        $instance = $this->engine->recordDecision($instance, $medicalUser, 'approved_with_changes', 'Fix the dosing claim on page 2.');
+
+        // Parked with the task owner - nobody else has a task.
+        $this->assertSame('approved_with_changes_pending', $document->fresh()->status);
+        $this->assertSame(0, $instance->fresh()->pendingAssignees()->count());
+
+        $v2 = $this->uploadRevision($document, $owner);
+        $this->engine->resumeAfterRevision($instance->fresh(), $v2);
+
+        // Medical already approved it (with changes): the revision goes straight to
+        // Final Approval, not back to Medical or the Content Manager.
         $instance = $instance->fresh();
-        $this->assertSame($medical->id, $instance->current_stage_id, 'Resubmission must resume at Medical, not restart from Content Manager.');
-        $this->assertSame('in_review', $document->fresh()->status);
-        $this->assertSame(2, $document->fresh()->versions()->count());
-        $this->assertSame($v2->id, $document->fresh()->current_version_id);
-
-        // Medical approves the revised version; workflow completes normally.
-        $instance = $this->engine->recordDecision($instance, $medicalUser, 'approved');
         $this->assertSame($final->id, $instance->current_stage_id);
+        $this->assertSame('in_review', $document->fresh()->status);
+        $this->assertSame($v2->id, $instance->document_version_id);
 
-        $instance = $this->engine->recordDecision($instance, $finalUser, 'approved');
+        $this->engine->recordDecision($instance, $finalUser, 'approved');
         $this->assertSame('approved_for_distribution', $document->fresh()->status);
+    }
+
+    public function test_approved_with_changes_at_the_last_stage_completes_once_the_revision_is_uploaded(): void
+    {
+        [$template, , , , $owner, $cmUser, $medicalUser, $finalUser] = $this->ownerRevisionChain();
+
+        $document = $this->makeDocument($template, $owner);
+        $instance = $this->engine->start($document, $document->currentVersion, $owner);
+        $this->engine->recordDecision($instance, $cmUser, 'approved');
+        $this->engine->recordDecision($instance->fresh(), $medicalUser, 'approved');
+        $instance = $this->engine->recordDecision($instance->fresh(), $finalUser, 'approved_with_changes', 'Tiny wording fix.');
+
+        $this->engine->resumeAfterRevision($instance->fresh(), $this->uploadRevision($document, $owner));
+
+        $this->assertSame('approved_for_distribution', $document->fresh()->status);
+    }
+
+    public function test_not_approved_still_returns_to_the_same_stage_and_same_stage_mode_is_honoured(): void
+    {
+        [$template, , $medical, , $owner, $cmUser, $medicalUser] = $this->ownerRevisionChain();
+
+        $document = $this->makeDocument($template, $owner);
+        $instance = $this->engine->start($document, $document->currentVersion, $owner);
+        $this->engine->recordDecision($instance, $cmUser, 'approved');
+        $instance = $this->engine->recordDecision($instance->fresh(), $medicalUser, 'not_approved', 'Unsupported claim.');
+
+        $this->engine->resumeAfterRevision($instance->fresh(), $this->uploadRevision($document, $owner));
+        $this->assertSame($medical->id, $instance->fresh()->current_stage_id, 'Not Approved must be re-reviewed by the stage that rejected it.');
+
+        // A template can opt back into re-review after Approved with changes too.
+        $template->update(['awc_resume' => 'same_stage']);
+        $instance = $this->engine->recordDecision($instance->fresh(), $medicalUser, 'approved_with_changes', 'Still one fix.');
+        $this->engine->resumeAfterRevision($instance->fresh(), $this->uploadRevision($document, $owner));
+        $this->assertSame($medical->id, $instance->fresh()->current_stage_id);
+    }
+
+    public function test_a_legacy_revision_hub_resumes_where_it_was_flagged_instead_of_rerunning_every_stage(): void
+    {
+        $template = $this->makeTemplate('Hub', 'HUB');
+        $hub = $this->stageFor($template, 1, 'Content Manager Review');
+        $hub->update(['is_revision_stage' => true]);
+        $s2 = $this->stageFor($template, 2, 'TM/AGM');
+        $s3 = $this->stageFor($template, 3, 'Legal');
+
+        $this->approvedTransition($hub, $s2);
+        $this->approvedTransition($s2, $s3);
+        $this->approvedTransition($s3, null);
+        WorkflowTransition::create([
+            'workflow_stage_id' => $s3->id, 'decision' => 'not_approved', 'outcome_type' => 'return_to_stage',
+            'target_stage_id' => $hub->id, 'resume_at_stage_id' => $s3->id,
+        ]);
+
+        $users = [];
+        foreach ([$hub, $s2, $s3] as $stage) {
+            $users[] = $u = User::factory()->create();
+            WorkflowStageApprover::create(['workflow_stage_id' => $stage->id, 'user_id' => $u->id]);
+        }
+
+        $document = $this->makeDocument($template);
+        $instance = $this->engine->start($document, $document->currentVersion, $document->owner);
+        $this->engine->recordDecision($instance, $users[0], 'approved');
+        $this->engine->recordDecision($instance->fresh(), $users[1], 'approved');
+        $instance = $this->engine->recordDecision($instance->fresh(), $users[2], 'not_approved', 'Legal issue.');
+
+        $this->assertSame($hub->id, $instance->fresh()->current_stage_id);
+        $this->assertSame('in_review', $document->fresh()->status, 'A document sitting with a reviewer must not show Revise & Resubmit.');
+
+        $instance = $this->engine->recordDecision($instance->fresh(), $users[0], 'approved');
+        $this->assertSame($s3->id, $instance->fresh()->current_stage_id, 'After the hub clears it, review resumes at Legal - TM/AGM is not re-run.');
     }
 
     // --- Rejection terminates the workflow ---------------------------------------

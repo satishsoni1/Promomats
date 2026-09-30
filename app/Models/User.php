@@ -49,6 +49,60 @@ class User extends Authenticatable
             ->exists();
     }
 
+    /** MLR reviewer (Medical / Regulatory / Legal): reviews and comments, never uploads. */
+    public function isMlrReviewer(): bool
+    {
+        return $this->hasAnyRole(config('promomats.roles.mlr'));
+    }
+
+    /** Member of the internal Design Team (also acts as Content Creator in workflows). */
+    public function isDesignTeam(): bool
+    {
+        return $this->hasAnyRole(config('promomats.roles.design_team'));
+    }
+
+    /**
+     * A Brand Manager who holds no reviewer role: may start jobs, upload and assign
+     * stakeholders, but never approve or reject (UAT feedback). Someone who is both
+     * a Brand Manager and e.g. a Regulatory reviewer can still act in that capacity.
+     */
+    public function isBrandManagerOnly(): bool
+    {
+        $roleSlugs = $this->roles->pluck('slug');
+
+        return $roleSlugs->intersect(config('promomats.roles.brand_manager'))->isNotEmpty()
+            && $roleSlugs->diff(config('promomats.roles.brand_manager'))->isEmpty();
+    }
+
+    /** Whether this person may ever record an approval decision. */
+    public function canRecordDecisions(): bool
+    {
+        return ! $this->isBrandManagerOnly();
+    }
+
+    /**
+     * Whether this person may upload files at all (new jobs, new versions). MLR
+     * reviewers are review-only unless they also hold a non-MLR role, or are admins.
+     */
+    public function canUploadDocuments(): bool
+    {
+        if ($this->isGlobalAdmin()) {
+            return true;
+        }
+
+        $roleSlugs = $this->roles->pluck('slug');
+
+        return $roleSlugs->isEmpty() || $roleSlugs->diff(config('promomats.roles.mlr'))->isNotEmpty();
+    }
+
+    /** Active Design Team members. */
+    public static function designTeam()
+    {
+        return static::where('is_active', true)
+            ->whereHas('roles', fn ($q) => $q->whereIn('slug', config('promomats.roles.design_team')))
+            ->orderBy('name');
+    }
+
     /** Full, unscoped administrator. */
     public function isGlobalAdmin(): bool
     {
@@ -94,6 +148,32 @@ class User extends Authenticatable
     public function pendingApprovals()
     {
         return $this->hasMany(DocumentStageAssignee::class, 'user_id')->where('status', 'pending');
+    }
+
+    /**
+     * Open team work this person can act on: tasks assigned to them, plus - for
+     * Design Team members - anything still sitting with the team unassigned.
+     */
+    public function openWorkTasksQuery()
+    {
+        return DocumentWorkTask::open()->where(function ($q) {
+            $q->where('assigned_to', $this->id);
+            if ($this->isDesignTeam()) {
+                $q->orWhere(fn ($q2) => $q2->where('team', 'design')->whereNull('assigned_to'));
+            }
+        });
+    }
+
+    /**
+     * Everything waiting on this person's action - approvals, revisions of their own
+     * documents, and team work - for the sidebar badge.
+     */
+    public function actionRequiredCount(): int
+    {
+        return $this->pendingApprovals()->count()
+            + $this->ownedDocuments()->where('status', 'approved_with_changes_pending')
+                ->whereDoesntHave('workTasks', fn ($q) => $q->open())->count()
+            + $this->openWorkTasksQuery()->count();
     }
 
     /**

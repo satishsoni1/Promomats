@@ -94,7 +94,7 @@
                     @csrf
                     <input type="text" name="title" placeholder="Reference title (optional — defaults to the file name)" class="block w-full text-sm border-gray-300 rounded-md">
                     <input type="text" name="category" placeholder="Category (optional, e.g. Study, Certificate, Legal Template)" class="block w-full text-sm border-gray-300 rounded-md">
-                    <input type="file" name="file" required class="block w-full text-sm">
+                    <x-file-dropzone name="file" required />
                     <x-primary-button>Attach</x-primary-button>
                 </form>
 

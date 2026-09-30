@@ -18,7 +18,9 @@ class DocumentActionNotification extends Notification implements ShouldQueue
         public Document $document,
         public string $event, // stage_assigned | action_taken | workflow_completed | comment_added |
                                // version_uploaded | claim_inserted | lifecycle_changed | overdue_reminder |
-                               // retrieval_requested | retrieval_completed | retrieval_failed | content_edited
+                               // retrieval_requested | retrieval_completed | retrieval_failed | content_edited |
+                               // due_soon_reminder | task_reassigned | work_task_created | work_task_assigned |
+                               // work_task_completed | revision_needed
         public ?WorkflowStage $stage = null,
         public ?User $actor = null,
         public ?string $decision = null,
@@ -56,7 +58,11 @@ class DocumentActionNotification extends Notification implements ShouldQueue
             ->when($this->comments, fn ($mail) => $mail->line("Comments: {$this->comments}"))
             ->when(
                 $this->event === 'action_taken' && $this->decision === 'approved_with_changes',
-                fn ($mail) => $mail->line('The document owner needs to revise the content and upload a new version - the workflow will resume automatically once it\'s resubmitted.')
+                fn ($mail) => $mail->line('The task owner revises it (or sends it to the Design Team) and uploads a new version - it then moves on to the next stage, since this stage has already approved it.')
+            )
+            ->when(
+                $this->event === 'revision_needed',
+                fn ($mail) => $mail->line('Open the document to upload the revised file yourself, or send it to the Design Team for rework. It is waiting on you until then.')
             )
             ->when(
                 $this->event === 'stage_assigned' && $this->stage?->parallel_group,
@@ -93,6 +99,12 @@ class DocumentActionNotification extends Notification implements ShouldQueue
             'retrieval_completed' => "Ready: {$this->document->title} has been restored",
             'retrieval_failed' => "⚠ Retrieval failed: {$this->document->title}",
             'content_edited' => "Content edited: {$this->document->title}",
+            'due_soon_reminder' => "Due soon: {$this->document->title} needs your review",
+            'task_reassigned' => "Action required (reassigned to you): {$this->document->title}",
+            'work_task_created' => "Design Team: new work for {$this->document->title}",
+            'work_task_assigned' => "Assigned to you: design work for {$this->document->title}",
+            'work_task_completed' => "Artwork uploaded: {$this->document->title}",
+            'revision_needed' => "Action required: revise {$this->document->title}",
             default => $this->document->title,
         };
     }
@@ -112,6 +124,12 @@ class DocumentActionNotification extends Notification implements ShouldQueue
             'retrieval_completed' => "'{$this->document->title}' has been restored from cold storage and is available again.",
             'retrieval_failed' => "The cold storage retrieval for '{$this->document->title}' failed and needs attention.",
             'content_edited' => "{$this->actorLabel()} edited the content of '{$this->document->title}' directly in the PDF.",
+            'due_soon_reminder' => "'{$this->document->title}' is due soon at stage '{$this->stage?->name}'.",
+            'task_reassigned' => "{$this->actorLabel()} reassigned stage '{$this->stage?->name}' of '{$this->document->title}' to you.",
+            'work_task_created' => "{$this->actorLabel()} sent '{$this->document->title}' to the Design Team. Anyone in the team can pick it up or assign it to a designer.",
+            'work_task_assigned' => "{$this->actorLabel()} assigned the design work for '{$this->document->title}' to you.",
+            'work_task_completed' => "{$this->actorLabel()} uploaded the artwork for '{$this->document->title}'.",
+            'revision_needed' => "'{$this->document->title}' was {$this->decisionLabel()} at stage '{$this->stage?->name}' by {$this->actorLabel()} and is waiting on you to upload the revision.",
             default => "There is an update on '{$this->document->title}'.",
         };
     }

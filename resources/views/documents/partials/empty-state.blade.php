@@ -4,7 +4,7 @@
     <p class="text-xs text-gray-400 mt-1 max-w-xs">Try adjusting your search or filters, or upload a new document to get started.</p>
     @if (request()->anyFilled(['status', 'category', 'search', 'mine']))
         <a href="{{ route('documents.index') }}" class="mt-4 text-xs text-brand-600 hover:underline font-medium">Clear all filters</a>
-    @else
+    @elsecan('create', \App\Models\Document::class)
         <a href="{{ route('documents.create') }}" class="mt-4 inline-flex items-center px-3.5 py-1.5 bg-brand-600 rounded-lg text-xs font-semibold text-white hover:bg-brand-700 transition">Upload Document</a>
     @endif
 </div>

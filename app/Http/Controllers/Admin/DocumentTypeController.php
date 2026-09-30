@@ -20,6 +20,7 @@ class DocumentTypeController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'code' => ['nullable', 'string', 'max:50', 'unique:document_types,code'],
+            'channel' => ['nullable', 'in:print,digital'],
             'allowed_extensions' => ['nullable', 'string', 'max:255'],
             'max_file_size_kb' => ['nullable', 'integer', 'min:1'],
         ]);
@@ -33,6 +34,7 @@ class DocumentTypeController extends Controller
         DocumentType::create([
             'name' => $validated['name'],
             'code' => $validated['code'] ?: Str::upper(Str::slug($validated['name'], '_')),
+            'channel' => $validated['channel'] ?? null,
             'allowed_extensions' => $extensions ?: null,
             'max_file_size_kb' => $validated['max_file_size_kb'] ?? null,
             'status' => 'active',

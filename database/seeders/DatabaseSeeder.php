@@ -46,5 +46,9 @@ class DatabaseSeeder extends Seeder
         $this->call(BrandAndDocumentTypeSeeder::class);
 
         $this->call(ClaimsDemoSeeder::class);
+
+        // Himalaya UAT feedback round: Design Team, Print/Digital collateral types,
+        // revised PromoMats workflows with Draft stages and owner-picked stakeholders.
+        $this->call(HimalayaFeedbackRoundSeeder::class);
     }
 }
