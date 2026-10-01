@@ -69,7 +69,7 @@ class DocumentStageAssignee extends Model
         $due = $this->dueAt();
 
         return $this->status === 'pending' && $due && $due->isFuture()
-            && now()->diffInHours($due) <= config('promomats.due_dates.reminder_hours_before');
+            && now()->diffInHours($due) <= config('promomats.due_dates.reminder_hours_before', 12);
     }
 
     public function hoursWaiting(): int

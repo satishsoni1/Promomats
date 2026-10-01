@@ -18,9 +18,9 @@ class SecurityHeaders
         $response = $next($request);
 
         $response->headers->set('X-Content-Type-Options', 'nosniff');
-        // This app is never meant to be embedded in another site's <iframe> - blocking
-        // it outright removes clickjacking as a concern rather than tuning it per page.
-        $response->headers->set('X-Frame-Options', 'DENY');
+        // Never embeddable by another site (clickjacking), but the app may frame its
+        // own pages - the Versions "View" preview shows a PDF inline in an iframe.
+        $response->headers->set('X-Frame-Options', 'SAMEORIGIN');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
         // Browser-level lockout for APIs this app never uses - camera/mic/geolocation
         // have no legitimate reason to be requestable from any page here.

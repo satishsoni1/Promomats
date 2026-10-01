@@ -36,7 +36,7 @@ class DocumentApprovalController extends Controller
      */
     public function act(Request $request, DocumentWorkflowInstance $instance)
     {
-        $requirePassword = config('promomats.approvals.require_password');
+        $requirePassword = config('promomats.approvals.require_password', false);
 
         $validated = $request->validate([
             'decision' => ['required', 'in:approved,approved_with_changes,not_approved'],

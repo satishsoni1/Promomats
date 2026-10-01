@@ -85,7 +85,7 @@ class DocumentController extends Controller
         // Brand Managers are never handed approval tasks, so they're not offered.
         $bmOnlyIds = User::with('roles')->whereIn('id', $candidateUserIds)->get()
             ->filter(fn ($u) => $u->isBrandManagerOnly())->pluck('id');
-        $defaultDueHours = config('promomats.due_dates.default_stage_hours');
+        $defaultDueHours = config('promomats.due_dates.default_stage_hours', 48);
 
         $templateApproverOptions = $templates
             ->where('owner_can_customize_workflow', true)
@@ -278,7 +278,7 @@ class DocumentController extends Controller
                 document: $document,
                 requestedBy: $request->user(),
                 instructions: $validated['design_instructions'] ?? null,
-                dueAt: ! empty($validated['due_date']) ? \Illuminate\Support\Carbon::parse($validated['due_date'])->endOfDay() : now()->addHours(config('promomats.due_dates.default_stage_hours')),
+                dueAt: ! empty($validated['due_date']) ? \Illuminate\Support\Carbon::parse($validated['due_date'])->endOfDay() : now()->addHours(config('promomats.due_dates.default_stage_hours', 48)),
             );
 
             return redirect()->route('documents.show', $document)
@@ -307,7 +307,7 @@ class DocumentController extends Controller
     {
         $stageIds = WorkflowStage::where('workflow_template_id', $document->workflow_template_id)->pluck('sla_hours', 'id');
         $codes = WorkflowStage::whereIn('id', array_keys($raw))->pluck('code', 'id');
-        $default = config('promomats.due_dates.default_stage_hours');
+        $default = config('promomats.due_dates.default_stage_hours', 48);
 
         foreach ($raw as $stageId => $hours) {
             $hours = (int) $hours;

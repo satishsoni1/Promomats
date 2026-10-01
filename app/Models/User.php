@@ -52,13 +52,13 @@ class User extends Authenticatable
     /** MLR reviewer (Medical / Regulatory / Legal): reviews and comments, never uploads. */
     public function isMlrReviewer(): bool
     {
-        return $this->hasAnyRole(config('promomats.roles.mlr'));
+        return $this->hasAnyRole(config('promomats.roles.mlr', ['medical', 'regulatory', 'legal', 'regulatory-level-1', 'regulatory-level-2', 'legal-level-1', 'legal-level-2']));
     }
 
     /** Member of the internal Design Team (also acts as Content Creator in workflows). */
     public function isDesignTeam(): bool
     {
-        return $this->hasAnyRole(config('promomats.roles.design_team'));
+        return $this->hasAnyRole(config('promomats.roles.design_team', ['design-team', 'design-internal', 'content-creator', 'content-creator-intext']));
     }
 
     /**
@@ -70,8 +70,8 @@ class User extends Authenticatable
     {
         $roleSlugs = $this->roles->pluck('slug');
 
-        return $roleSlugs->intersect(config('promomats.roles.brand_manager'))->isNotEmpty()
-            && $roleSlugs->diff(config('promomats.roles.brand_manager'))->isEmpty();
+        return $roleSlugs->intersect(config('promomats.roles.brand_manager', ['brand-manager']))->isNotEmpty()
+            && $roleSlugs->diff(config('promomats.roles.brand_manager', ['brand-manager']))->isEmpty();
     }
 
     /** Whether this person may ever record an approval decision. */
@@ -92,14 +92,14 @@ class User extends Authenticatable
 
         $roleSlugs = $this->roles->pluck('slug');
 
-        return $roleSlugs->isEmpty() || $roleSlugs->diff(config('promomats.roles.mlr'))->isNotEmpty();
+        return $roleSlugs->isEmpty() || $roleSlugs->diff(config('promomats.roles.mlr', ['medical', 'regulatory', 'legal', 'regulatory-level-1', 'regulatory-level-2', 'legal-level-1', 'legal-level-2']))->isNotEmpty();
     }
 
     /** Active Design Team members. */
     public static function designTeam()
     {
         return static::where('is_active', true)
-            ->whereHas('roles', fn ($q) => $q->whereIn('slug', config('promomats.roles.design_team')))
+            ->whereHas('roles', fn ($q) => $q->whereIn('slug', config('promomats.roles.design_team', ['design-team', 'design-internal', 'content-creator', 'content-creator-intext'])))
             ->orderBy('name');
     }
 

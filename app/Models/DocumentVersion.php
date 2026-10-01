@@ -84,6 +84,21 @@ class DocumentVersion extends Model
             ], true);
     }
 
+    /**
+     * How the in-page "View" preview shows this file: pdf | image | video | docx,
+     * or null when the browser can't show it (the user downloads it instead).
+     */
+    public function previewKind(): ?string
+    {
+        return match (true) {
+            $this->isPdf() => 'pdf',
+            $this->isImage() && $this->extension() !== 'svg' => 'image',
+            $this->isVideo() => 'video',
+            $this->extension() === 'docx' => 'docx',
+            default => null,
+        };
+    }
+
     public function extension(): string
     {
         return strtolower(pathinfo((string) $this->original_filename, PATHINFO_EXTENSION));

@@ -23,7 +23,7 @@
     $canUploadVersion = $user->can('uploadVersion', $document);
     $openWorkTask = $document->workTasks->firstWhere('status', 'open');
     $isParked = $document->status === 'approved_with_changes_pending';
-    $requirePassword = config('promomats.approvals.require_password');
+    $requirePassword = config('promomats.approvals.require_password', false);
     $myStageIsDraft = $myAssignment?->stage?->isDraft();
     $reassignOptions = $canManageTasks && $instance
         ? \App\Models\User::with('roles')->where('is_active', true)->orderBy('name')->get(['id', 'name'])->filter(fn ($u) => $u->canRecordDecisions())
@@ -341,7 +341,7 @@
                         @endif
                     </div>
 
-                    <div class="{{ $cardClass }}">
+                    <div class="{{ $cardClass }}" x-data="versionPreview()" @keydown.escape.window="close()">
                         <div class="flex items-center justify-between mb-3">
                             <h3 class="text-base font-semibold text-gray-900">Versions</h3>
                             <div class="flex items-center gap-3">
@@ -387,14 +387,70 @@
                                             <td class="py-2.5 text-gray-500">{{ $version->uploader?->name }}</td>
                                             <td class="py-2.5 text-gray-500">{{ $version->humanFileSize() }}</td>
                                             <td class="py-2.5 text-gray-400">{{ $version->change_notes }}</td>
-                                            <td class="py-2.5 text-right">
-                                                <a href="{{ $version->downloadUrl() }}" class="text-brand-600 hover:underline font-medium">Download</a>
+                                            <td class="py-2.5 text-right whitespace-nowrap">
+                                                <button type="button"
+                                                        @click="open({{ \Illuminate\Support\Js::from([
+                                                            'url' => $version->viewUrl(),
+                                                            'downloadUrl' => $version->downloadUrl(),
+                                                            'name' => $version->original_filename,
+                                                            'label' => 'v' . $version->version_no . ($version->is_current ? ' (current)' : ''),
+                                                            'kind' => $version->previewKind(),
+                                                        ]) }})"
+                                                        class="text-brand-600 hover:underline font-medium">View</button>
+                                                <span class="text-gray-300 mx-1">|</span>
+                                                <a href="{{ $version->downloadUrl() }}" class="text-gray-500 hover:text-brand-600 hover:underline">Download</a>
                                             </td>
                                         </tr>
                                     @endforeach
                                 </tbody>
                             </table>
                         </div>
+
+                        {{-- In-page preview: look at any version without downloading it. --}}
+                        <template x-teleport="body">
+                            <div x-show="current" x-cloak class="fixed inset-0 z-50 bg-gray-900/70 flex items-center justify-center p-2 sm:p-6" @click.self="close()">
+                                <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-full flex flex-col overflow-hidden">
+                                    <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
+                                        <div class="min-w-0">
+                                            <p class="font-semibold text-gray-900 truncate" x-text="current?.name"></p>
+                                            <p class="text-xs text-gray-500" x-text="current?.label"></p>
+                                        </div>
+                                        <div class="flex items-center gap-2 shrink-0">
+                                            <a :href="current?.downloadUrl" class="inline-flex items-center gap-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50">⬇ Download</a>
+                                            <button type="button" @click="close()" class="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100 text-xl leading-none" title="Close (Esc)">&times;</button>
+                                        </div>
+                                    </div>
+                                    <div class="flex-1 min-h-0 bg-gray-100">
+                                        <template x-if="current?.kind === 'pdf'">
+                                            <iframe :src="current.url" class="w-full h-full bg-white" title="Document preview"></iframe>
+                                        </template>
+                                        <template x-if="current?.kind === 'image'">
+                                            <div class="w-full h-full overflow-auto flex items-center justify-center p-4">
+                                                <img :src="current.url" :alt="current.name" class="max-w-full max-h-full object-contain shadow">
+                                            </div>
+                                        </template>
+                                        <template x-if="current?.kind === 'video'">
+                                            <div class="w-full h-full flex items-center justify-center bg-black">
+                                                <video :src="current.url" controls class="max-w-full max-h-full"></video>
+                                            </div>
+                                        </template>
+                                        <template x-if="current?.kind === 'docx'">
+                                            <div class="w-full h-full relative">
+                                                <div x-show="loading" class="absolute inset-0 flex items-center justify-center text-sm text-gray-500">Loading Word document…</div>
+                                                <div x-show="error" x-cloak class="m-4 text-sm text-amber-800 bg-amber-50 rounded-md p-3" x-text="error"></div>
+                                                <div x-ref="docx" class="w-full h-full"></div>
+                                            </div>
+                                        </template>
+                                        <template x-if="current && ! current.kind">
+                                            <div class="w-full h-full flex flex-col items-center justify-center text-center p-6">
+                                                <p class="text-sm text-gray-600">This file type can't be previewed in the browser.</p>
+                                                <a :href="current.downloadUrl" class="mt-3 inline-flex px-4 py-2 bg-brand-600 rounded-lg text-sm font-medium text-white hover:bg-brand-700">Download to open it</a>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
                     </div>
 
                     <div class="{{ $cardClass }}">
@@ -619,7 +675,7 @@
                                     <div class="grid grid-cols-2 gap-2">
                                         <div>
                                             <label class="text-xs text-gray-500">Due date</label>
-                                            <input type="date" name="due_date" min="{{ now()->toDateString() }}" value="{{ now()->addHours(config('promomats.due_dates.default_stage_hours'))->toDateString() }}" class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
+                                            <input type="date" name="due_date" min="{{ now()->toDateString() }}" value="{{ now()->addHours(config('promomats.due_dates.default_stage_hours', 48))->toDateString() }}" class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
                                         </div>
                                         <div>
                                             <label class="text-xs text-gray-500">Designer (optional)</label>

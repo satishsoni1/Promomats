@@ -12,7 +12,7 @@
     $due = function ($at) {
         if (! $at) return ['—', 'text-gray-400'];
         if ($at->isPast()) return ['Overdue ' . $at->diffForHumans(null, true), 'text-red-600 font-medium'];
-        if (now()->diffInHours($at) <= config('promomats.due_dates.reminder_hours_before')) return ['Due in ' . $at->diffForHumans(null, true), 'text-amber-600 font-medium'];
+        if (now()->diffInHours($at) <= config('promomats.due_dates.reminder_hours_before', 12)) return ['Due in ' . $at->diffForHumans(null, true), 'text-amber-600 font-medium'];
         return ['Due ' . $at->format('d M, H:i'), 'text-gray-500'];
     };
 @endphp

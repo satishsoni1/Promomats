@@ -161,7 +161,7 @@ class Document extends Model
         $override = ($this->relationLoaded('stageSettings') ? $this->stageSettings : $this->stageSettings())
             ->where('workflow_stage_id', $stage->id)->first();
 
-        return (int) ($override?->due_hours ?? $stage->sla_hours ?? config('promomats.due_dates.default_stage_hours'));
+        return (int) ($override?->due_hours ?? $stage->sla_hours ?? config('promomats.due_dates.default_stage_hours', 48));
     }
 
     public function channelLabel(): ?string

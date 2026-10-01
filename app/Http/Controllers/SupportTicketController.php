@@ -43,7 +43,7 @@ class SupportTicketController extends Controller
             'document_id' => ['nullable', 'integer', 'exists:documents,id'],
         ]);
 
-        $hours = config('promomats.helpdesk.first_response_hours')[$validated['priority']] ?? 8;
+        $hours = config('promomats.helpdesk.first_response_hours', ['urgent' => 2, 'high' => 4, 'normal' => 8, 'low' => 24])[$validated['priority']] ?? 8;
 
         $ticket = SupportTicket::create($validated + [
             'reference' => 'HD-' . now()->format('ymd') . '-' . strtoupper(Str::random(4)),
@@ -52,7 +52,7 @@ class SupportTicketController extends Controller
             'first_response_due_at' => now()->addHours($hours),
         ]);
 
-        Notification::route('mail', config('promomats.helpdesk.email'))->notify(new SupportTicketNotification($ticket));
+        Notification::route('mail', config('promomats.helpdesk.email', 'support@globalspace.in'))->notify(new SupportTicketNotification($ticket));
         $request->user()->notify(new SupportTicketNotification($ticket, forRequester: true));
 
         return redirect()->route('helpdesk.index')

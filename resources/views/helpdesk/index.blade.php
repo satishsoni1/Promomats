@@ -27,7 +27,7 @@
                             <x-input-label for="priority" value="Priority" />
                             <select id="priority" name="priority" class="mt-1 block w-full text-sm border-gray-300 rounded-md">
                                 @foreach (\App\Models\SupportTicket::PRIORITIES as $key => $label)
-                                    <option value="{{ $key }}" @selected(old('priority', 'normal') === $key)>{{ $label }} — reply within {{ config('promomats.helpdesk.first_response_hours')[$key] }}h</option>
+                                    <option value="{{ $key }}" @selected(old('priority', 'normal') === $key)>{{ $label }} — reply within {{ config('promomats.helpdesk.first_response_hours', ['urgent' => 2, 'high' => 4, 'normal' => 8, 'low' => 24])[$key] }}h</option>
                                 @endforeach
                             </select>
                         </div>

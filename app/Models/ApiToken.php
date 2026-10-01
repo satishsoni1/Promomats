@@ -34,7 +34,7 @@ class ApiToken extends Model
             'user_id' => $user->id,
             'name' => $name,
             'token_hash' => hash('sha256', $plain),
-            'expires_at' => now()->addDays(config('promomats.mobile.token_days')),
+            'expires_at' => now()->addDays(config('promomats.mobile.token_days', 30)),
         ]);
 
         return [$token, $plain];

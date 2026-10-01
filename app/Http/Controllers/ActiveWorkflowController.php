@@ -56,7 +56,7 @@ class ActiveWorkflowController extends Controller
 
         // Brand Manager tabs.
         $brandManagers = User::where('is_active', true)
-            ->whereHas('roles', fn ($q) => $q->whereIn('slug', config('promomats.roles.brand_manager')))
+            ->whereHas('roles', fn ($q) => $q->whereIn('slug', config('promomats.roles.brand_manager', ['brand-manager'])))
             ->orderBy('name')
             ->get(['id', 'name']);
         if (! $user->canAdminister()) {

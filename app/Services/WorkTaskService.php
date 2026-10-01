@@ -61,7 +61,7 @@ class WorkTaskService
             'requested_by' => $requestedBy->id,
             'instructions' => $instructions,
             'resubmit_on_upload' => $resubmitOnUpload,
-            'due_at' => $dueAt ?? now()->addHours(config('promomats.due_dates.default_stage_hours')),
+            'due_at' => $dueAt ?? now()->addHours(config('promomats.due_dates.default_stage_hours', 48)),
         ]);
 
         $this->audit->record(
