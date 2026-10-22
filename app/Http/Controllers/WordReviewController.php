@@ -38,7 +38,10 @@ class WordReviewController extends Controller
             return 'viewer';
         }
 
-        return $user->can('uploadVersion', $document) ? 'editor' : 'suggester';
+        // In-browser review is view / comment / suggest only - nobody edits the
+        // document directly here. Direct edits and accepting/rejecting suggestions
+        // happen in desktop Word, uploaded as a new version.
+        return 'suggester';
     }
 
     public function store(Request $request, Document $document)
@@ -61,12 +64,7 @@ class WordReviewController extends Controller
         }
 
         $user = $request->user();
-        $role = self::editorRole($document, $user);
-        $notes = trim(($validated['change_notes'] ?? '') ?: (
-            $role === 'editor'
-                ? 'Edited in the browser by ' . $user->name
-                : 'Tracked changes/comments suggested in the browser by ' . $user->name
-        ));
+        $notes = trim(($validated['change_notes'] ?? '') ?: 'Tracked changes/comments suggested in the browser by ' . $user->name);
 
         $version = $this->versionService->storeNewVersion(
             document: $document,

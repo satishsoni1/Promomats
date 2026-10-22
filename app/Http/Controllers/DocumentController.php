@@ -597,6 +597,12 @@ class DocumentController extends Controller
     {
         $this->authorize('view', $version->document);
 
+        abort_unless(
+            \Illuminate\Support\Facades\Storage::disk($version->disk)->exists($version->file_path),
+            404,
+            'The stored file for this version is missing.'
+        );
+
         $contentType = match (true) {
             $version->isPdf() => 'application/pdf',
             $version->isImage() => $this->safeImageMimeType($version),

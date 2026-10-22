@@ -61,6 +61,8 @@ class DocumentVersionService
 
     public function download(DocumentVersion $version)
     {
+        abort_unless(Storage::disk($version->disk)->exists($version->file_path), 404, 'The stored file for this version is missing.');
+
         return Storage::disk($version->disk)->download($version->file_path, $version->original_filename);
     }
 }

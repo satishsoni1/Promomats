@@ -180,7 +180,7 @@
 
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <!-- Left: details + versions + history -->
-                <div class="lg:col-span-2 space-y-6">
+                <div class="lg:col-span-2 space-y-6 min-w-0">
 
                     @if ($document->currentVersion?->isPdf() || ($document->currentVersion?->isImage() && $document->currentVersion?->extension() !== 'svg'))
                         @include('documents.partials.pdf-viewer')
@@ -341,7 +341,7 @@
                         @endif
                     </div>
 
-                    <div class="{{ $cardClass }}" x-data="versionPreview()" @keydown.escape.window="close()">
+                    <div class="{{ $cardClass }}" x-data="versionPreview()" @keydown.escape.window="closePreview()">
                         <div class="flex items-center justify-between mb-3">
                             <h3 class="text-base font-semibold text-gray-900">Versions</h3>
                             <div class="flex items-center gap-3">
@@ -389,7 +389,7 @@
                                             <td class="py-2.5 text-gray-400">{{ $version->change_notes }}</td>
                                             <td class="py-2.5 text-right whitespace-nowrap">
                                                 <button type="button"
-                                                        @click="open({{ \Illuminate\Support\Js::from([
+                                                        @click="showVersion({{ \Illuminate\Support\Js::from([
                                                             'url' => $version->viewUrl(),
                                                             'downloadUrl' => $version->downloadUrl(),
                                                             'name' => $version->original_filename,
@@ -408,7 +408,7 @@
 
                         {{-- In-page preview: look at any version without downloading it. --}}
                         <template x-teleport="body">
-                            <div x-show="current" x-cloak class="fixed inset-0 z-50 bg-gray-900/70 flex items-center justify-center p-2 sm:p-6" @click.self="close()">
+                            <div x-show="current" x-cloak class="fixed inset-0 z-50 bg-gray-900/70 flex items-center justify-center p-2 sm:p-6" @click.self="closePreview()">
                                 <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-full flex flex-col overflow-hidden">
                                     <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
                                         <div class="min-w-0">
@@ -417,7 +417,7 @@
                                         </div>
                                         <div class="flex items-center gap-2 shrink-0">
                                             <a :href="current?.downloadUrl" class="inline-flex items-center gap-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50">⬇ Download</a>
-                                            <button type="button" @click="close()" class="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100 text-xl leading-none" title="Close (Esc)">&times;</button>
+                                            <button type="button" @click="closePreview()" class="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100 text-xl leading-none" title="Close (Esc)">&times;</button>
                                         </div>
                                     </div>
                                     <div class="flex-1 min-h-0 bg-gray-100">

@@ -1,7 +1,7 @@
 @php
     $version = $document->currentVersion;
 @endphp
-<div class="bg-white shadow-sm ring-1 ring-gray-900/5 rounded-lg p-4">
+<div class="bg-white shadow-sm ring-1 ring-gray-900/5 rounded-lg p-4 min-w-0">
     @if ($version->extension() === 'docx')
         {{-- In-browser Word review with SuperDoc - see resources/js/word-editor.js --}}
         <div x-data="wordReviewEditor({
@@ -19,10 +19,8 @@
                 <span class="text-xs text-gray-500">
                     @if ($wordEditorRole === 'viewer')
                         ⚖️ Read-only while under legal hold
-                    @elseif ($wordEditorRole === 'editor')
-                        You can edit directly, switch to Suggesting to track your changes, and accept or reject others' changes.
                     @else
-                        Your edits are recorded as tracked changes for the owner to accept or reject.
+                        View, comment, and suggest changes. Every edit is recorded as a tracked change.
                     @endif
                 </span>
             </div>
@@ -31,8 +29,10 @@
             <div x-show="error" x-cloak x-text="error" class="text-sm text-amber-700 bg-amber-50 rounded-md p-3"></div>
 
             <div x-show="!error" :class="loading ? 'invisible h-0 overflow-hidden' : ''">
-                <div x-ref="toolbar" class="border border-gray-200 border-b-0 rounded-t bg-white"></div>
-                <div class="border border-gray-200 rounded-b bg-gray-100" style="height: 75vh;">
+                {{-- SuperDoc's page has a fixed width; keep it scrolling inside this box rather than
+                     spilling over the sidebar. The toolbar is left unclipped so its dropdowns can open. --}}
+                <div x-ref="toolbar" class="border border-gray-200 border-b-0 rounded-t bg-white min-w-0"></div>
+                <div class="relative border border-gray-200 rounded-b bg-gray-100 overflow-auto" style="height: 75vh;">
                     <div x-ref="editor" class="h-full"></div>
                 </div>
 

@@ -14,8 +14,8 @@ export default function versionPreview() {
         loading: false,
         error: null,
 
-        async open(file) {
-            this.close();
+        async showVersion(file) {
+            this.closePreview();
             this.current = file;
             this.error = null;
             document.body.classList.add('overflow-hidden');
@@ -30,6 +30,7 @@ export default function versionPreview() {
                     fetch(file.url, { credentials: 'include' }),
                     import('superdoc/style.css'),
                 ]);
+                if (res.status === 404) throw new Error('the stored file is missing from the server');
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const blob = await res.blob();
                 superdoc = new SuperDoc({
@@ -53,7 +54,7 @@ export default function versionPreview() {
             }
         },
 
-        close() {
+        closePreview() {
             if (superdoc) {
                 try { superdoc.destroy(); } catch (e) { /* already gone */ }
                 superdoc = null;

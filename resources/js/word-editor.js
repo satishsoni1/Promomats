@@ -5,8 +5,8 @@
  * browser - no document server - so there's no limit on concurrent reviewers.
  *
  * What the user may do comes from the server (WordReviewController::editorRole):
- *   editor    full editing, can accept/reject tracked changes
- *   suggester every edit becomes a tracked change (Word's "Suggesting")
+ *   suggester view, comment, and suggest - every edit becomes a tracked change
+ *             (Word's "Suggesting"); there is no direct-editing mode
  *   viewer    read-only, tracked changes + comments shown (legal hold)
  *
  * SuperDoc (~several MB) is loaded on demand, so pages without a Word document
@@ -36,6 +36,11 @@ export default function wordReviewEditor({ fileUrl, saveUrl, csrfToken, baseVers
                     fetch(fileUrl, { credentials: 'include' }),
                     import('superdoc/style.css'),
                 ]);
+                if (res.status === 404) {
+                    this.error = 'The stored file for this version is missing from the server. Re-upload it as a new version.';
+                    this.loading = false;
+                    return;
+                }
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const file = new File([await res.blob()], filename, { type: DOCX_MIME });
 
@@ -43,10 +48,22 @@ export default function wordReviewEditor({ fileUrl, saveUrl, csrfToken, baseVers
                     selector: this.$refs.editor,
                     document: file,
                     role,
-                    documentMode: role === 'editor' ? 'editing' : (role === 'suggester' ? 'suggesting' : 'viewing'),
+                    documentMode: role === 'viewer' ? 'viewing' : 'suggesting',
                     viewing: { comments: true, trackedChanges: 'markup' },
                     user,
-                    ui: { toolbar: { container: this.$refs.toolbar } },
+                    ui: {
+                        toolbar: {
+                            container: this.$refs.toolbar,
+                            // Review-only toolbar: no fonts/formatting/tables/images - just
+                            // navigation and the Suggesting/Viewing switch.
+                            items: {
+                                left: ['undo', 'redo'],
+                                center: ['zoom', 'search'],
+                                right: role === 'viewer' ? [] : ['document-mode'],
+                            },
+                            responsiveTo: 'container',
+                        },
+                    },
                     contained: true,
                     // Confidential client material: never report document opens to a third party.
                     telemetry: { enabled: false },
