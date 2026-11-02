@@ -610,6 +610,15 @@ class DocumentController extends Controller
             default => 'application/octet-stream',
         };
 
+        // Jumping to a video note needs seeking, which browsers can only do when the
+        // server honours Range requests - Storage::response() doesn't, a file response does.
+        if ($version->isVideo() && config("filesystems.disks.{$version->disk}.driver") === 'local') {
+            return response()
+                ->file(\Illuminate\Support\Facades\Storage::disk($version->disk)->path($version->file_path), ['Content-Type' => $contentType])
+                ->setContentDisposition('inline', $version->original_filename)
+                ->setPrivate();
+        }
+
         return \Illuminate\Support\Facades\Storage::disk($version->disk)->response(
             $version->file_path,
             $version->original_filename,

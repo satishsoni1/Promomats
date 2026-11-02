@@ -47,6 +47,26 @@ class DocumentReviewInPlatformTest extends TestCase
         return $document->fresh();
     }
 
+    // ---- Video: seeking to a note's timestamp ----
+
+    public function test_a_video_is_served_with_range_support_so_notes_can_seek_to_their_timestamp(): void
+    {
+        $owner = User::factory()->create();
+        $document = $this->documentWithFile($owner, 'clip.mp4', '0123456789');
+        // Fake uploads report .mp4 as application/mp4; browsers send video/mp4.
+        $document->currentVersion->update(['mime_type' => 'video/mp4']);
+
+        $response = $this->actingAs($owner)
+            ->withHeaders(['Range' => 'bytes=2-5'])
+            ->get($document->currentVersion->viewUrl());
+
+        $response->assertStatus(206);
+        $response->assertHeader('Content-Range', 'bytes 2-5/10');
+        $response->assertHeader('Content-Type', 'video/mp4');
+        $this->assertStringStartsWith('inline', $response->headers->get('Content-Disposition'));
+        $this->assertStringContainsString('private', $response->headers->get('Cache-Control'));
+    }
+
     // ---- PDF: highlight comments + resolve ----
 
     public function test_a_reviewer_can_post_a_text_highlight_comment_tied_to_the_current_version(): void

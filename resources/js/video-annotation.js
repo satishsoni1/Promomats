@@ -40,7 +40,9 @@ export default function videoAnnotationPlayer({ videoUrl, csrfToken, storeUrl, i
 
         seekTo(seconds) {
             const video = this.$refs.video;
+            video.pause();
             video.currentTime = seconds;
+            video.scrollIntoView({ behavior: 'smooth', block: 'center' });
             this.openPin = null;
         },
 
