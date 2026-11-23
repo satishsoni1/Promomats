@@ -46,7 +46,7 @@ class DocumentObserverController extends Controller
         abort_unless(
             $request->user()->id === $document->owner_id || $request->user()->can('access-admin'),
             403,
-            'Only the document owner or an admin can manage observers.'
+            'Only the Brand Manager who owns this job or an admin can manage observers.'
         );
     }
 }

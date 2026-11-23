@@ -50,7 +50,8 @@ class SendWorkflowNotifications
     public function handleReturnedToOwner(DocumentReturnedToOwner $event): void
     {
         $this->notifyUsers(
-            $event->instance, [$event->instance->document->owner_id], 'revision_needed',
+            $event->instance, [$event->instance->document->owner_id],
+            $event->decision === 'draft_aligned' ? 'draft_aligned' : 'revision_needed',
             $event->stage, $event->actor, $event->decision
         );
     }

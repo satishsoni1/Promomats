@@ -98,8 +98,30 @@ class User extends Authenticatable
     /** Active Design Team members. */
     public static function designTeam()
     {
+        return static::teamMembers('design');
+    }
+
+    /** External Content Agency user. */
+    public function isAgency(): bool
+    {
+        return $this->hasAnyRole(config('promomats.roles.agency', ['content-agency', 'agency']));
+    }
+
+    /** Whether this person belongs to a work-task team ('design' or 'agency'). */
+    public function inTeam(string $team): bool
+    {
+        return $team === 'agency' ? $this->isAgency() : $this->isDesignTeam();
+    }
+
+    /** Active members of a work-task team: 'design' (internal Design Team) or 'agency'. */
+    public static function teamMembers(string $team)
+    {
+        $slugs = $team === 'agency'
+            ? config('promomats.roles.agency', ['content-agency', 'agency'])
+            : config('promomats.roles.design_team', ['design-team', 'design-internal', 'content-creator', 'content-creator-intext']);
+
         return static::where('is_active', true)
-            ->whereHas('roles', fn ($q) => $q->whereIn('slug', config('promomats.roles.design_team', ['design-team', 'design-internal', 'content-creator', 'content-creator-intext'])))
+            ->whereHas('roles', fn ($q) => $q->whereIn('slug', $slugs))
             ->orderBy('name');
     }
 
@@ -151,27 +173,30 @@ class User extends Authenticatable
     }
 
     /**
-     * Open team work this person can act on: tasks assigned to them, plus - for
-     * Design Team members - anything still sitting with the team unassigned.
+     * Open team work this person can act on: tasks assigned to them, plus anything
+     * still sitting unassigned with a team they belong to (Design Team / Agency).
      */
     public function openWorkTasksQuery()
     {
         return DocumentWorkTask::open()->where(function ($q) {
             $q->where('assigned_to', $this->id);
-            if ($this->isDesignTeam()) {
-                $q->orWhere(fn ($q2) => $q2->where('team', 'design')->whereNull('assigned_to'));
+            foreach (['design', 'agency'] as $team) {
+                if ($this->inTeam($team)) {
+                    $q->orWhere(fn ($q2) => $q2->where('team', $team)->whereNull('assigned_to'));
+                }
             }
         });
     }
 
     /**
-     * Everything waiting on this person's action - approvals, revisions of their own
-     * documents, and team work - for the sidebar badge.
+     * Everything waiting on this person's action - approvals, their own jobs that
+     * are back with them (revision needed, or draft aligned and awaiting the
+     * creative), and team work - for the sidebar badge.
      */
     public function actionRequiredCount(): int
     {
         return $this->pendingApprovals()->count()
-            + $this->ownedDocuments()->where('status', 'approved_with_changes_pending')
+            + $this->ownedDocuments()->whereIn('status', Document::OWNER_ACTION_STATUSES)
                 ->whereDoesntHave('workTasks', fn ($q) => $q->open())->count()
             + $this->openWorkTasksQuery()->count();
     }

@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\DB;
 class WorkflowTemplate extends Model
 {
     protected $fillable = [
-        'name', 'code', 'family_code', 'version', 'description', 'applies_to_category', 'department', 'target_audiences', 'is_active', 'owner_can_customize_workflow', 'awc_resume', 'is_private', 'derived_from_template_id', 'created_by',
+        'name', 'code', 'family_code', 'version', 'description', 'applies_to_category', 'department', 'target_audiences', 'is_active', 'owner_can_customize_workflow', 'awc_resume', 'completion_status', 'is_private', 'derived_from_template_id', 'created_by',
     ];
 
     protected $casts = [
@@ -118,6 +118,7 @@ class WorkflowTemplate extends Model
                 'is_active' => true,
                 'owner_can_customize_workflow' => (bool) $this->owner_can_customize_workflow,
                 'awc_resume' => $this->awc_resume ?? 'next_stage',
+                'completion_status' => $this->completion_status ?? 'approved_for_distribution',
                 'created_by' => $admin->id,
             ]);
 
@@ -153,6 +154,7 @@ class WorkflowTemplate extends Model
                 'is_active' => false,
                 'owner_can_customize_workflow' => false,
                 'awc_resume' => $this->awc_resume ?? 'next_stage',
+                'completion_status' => $this->completion_status ?? 'approved_for_distribution',
                 'is_private' => true,
                 'derived_from_template_id' => $this->id,
                 'created_by' => $actor->id,

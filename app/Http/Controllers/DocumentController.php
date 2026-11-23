@@ -82,9 +82,11 @@ class DocumentController extends Controller
         $candidateUserIds = $templates->flatMap->stages->flatMap->approvers
             ->flatMap(fn ($a) => $a->resolveUserIds())->unique();
         $userNames = User::whereIn('id', $candidateUserIds)->pluck('name', 'id');
-        // Brand Managers are never handed approval tasks, so they're not offered.
+        // Brand Managers are never handed approval tasks, and the person creating the
+        // job will own it - makers can't be checkers - so neither is offered.
         $bmOnlyIds = User::with('roles')->whereIn('id', $candidateUserIds)->get()
-            ->filter(fn ($u) => $u->isBrandManagerOnly())->pluck('id');
+            ->filter(fn ($u) => $u->isBrandManagerOnly())->pluck('id')
+            ->push(auth()->id());
         $defaultDueHours = config('promomats.due_dates.default_stage_hours', 48);
 
         $templateApproverOptions = $templates
@@ -109,7 +111,7 @@ class DocumentController extends Controller
         // and every role, so a brand-new stage can be assigned to a role (whoever
         // holds it at run time) or to named people.
         $allUsers = User::with('roles')->where('is_active', true)->orderBy('name')->get(['id', 'name'])
-            ->reject(fn ($u) => $u->isBrandManagerOnly())
+            ->reject(fn ($u) => $u->isBrandManagerOnly() || $u->id === auth()->id())
             ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])
             ->values();
         $allRoles = Role::orderBy('name')->get(['id', 'name']);
@@ -163,6 +165,13 @@ class DocumentController extends Controller
             // Placeholder: start the job without a file; the Design Team uploads the artwork.
             'is_placeholder' => ['nullable', 'boolean'],
             'design_instructions' => ['nullable', 'string', 'max:5000'],
+            // Placeholder: who prepares the creative. 'later' (default) = the Brand
+            // Manager uploads the Word draft for Content Manager alignment first and
+            // commissions the creative once it's aligned.
+            'creative_team' => ['nullable', 'in:later,design,agency'],
+            // Reference documents (studies, sources) attached at upload time.
+            'reference_files' => ['nullable', 'array', 'max:20'],
+            'reference_files.*' => ['file', 'max:512000'],
             'aging_warning_days' => ['nullable', 'integer', 'min:1', 'max:365'],
             // Any file type accepted; adjust `max` (in KB) to your infra's real ceiling.
             // For very large files (100MB+), pair this with resumable/chunked upload on the frontend.
@@ -273,16 +282,32 @@ class DocumentController extends Controller
 
         $this->saveStageDueHours($document, $validated['stage_due_hours'] ?? []);
 
+        foreach ($request->file('reference_files', []) as $referenceFile) {
+            $this->storeReference($document, $referenceFile, $request->user());
+        }
+
         if ($isPlaceholder && ! $request->hasFile('file')) {
+            $team = $validated['creative_team'] ?? 'later';
+
+            if ($team === 'later') {
+                if (filled($validated['design_instructions'] ?? null) && blank($document->description)) {
+                    $document->update(['description' => $validated['design_instructions']]);
+                }
+
+                return redirect()->route('documents.show', $document)
+                    ->with('status', 'Placeholder created. Upload the Word draft and submit it for Content Manager alignment when ready.');
+            }
+
             app(\App\Services\WorkTaskService::class)->requestArtwork(
                 document: $document,
                 requestedBy: $request->user(),
                 instructions: $validated['design_instructions'] ?? null,
                 dueAt: ! empty($validated['due_date']) ? \Illuminate\Support\Carbon::parse($validated['due_date'])->endOfDay() : now()->addHours(config('promomats.due_dates.default_stage_hours', 48)),
+                team: $team,
             );
 
             return redirect()->route('documents.show', $document)
-                ->with('status', 'Placeholder created and sent to the Design Team to upload the artwork. You\'ll be notified when it\'s in.');
+                ->with('status', 'Placeholder created and sent to the ' . \App\Models\DocumentWorkTask::TEAM_LABELS[$team] . '. You\'ll be asked to confirm their upload before it goes for review.');
         }
 
         $version = $this->versionService->storeNewVersion(
@@ -295,6 +320,22 @@ class DocumentController extends Controller
         $this->audit->record(action: 'VERSION_CREATED', document: $document, version: $version, actor: $request->user());
 
         return redirect()->route('documents.show', $document)->with('status', 'Document uploaded. Submit it for review when ready.');
+    }
+
+    /** Attach a reference document (study, source, certificate) to the job. */
+    protected function storeReference(Document $document, \Illuminate\Http\UploadedFile $file, User $uploader): void
+    {
+        $path = $file->storeAs('reference-attachments/documents/' . $document->id, Str::uuid() . '_' . $file->getClientOriginalName(), 'documents');
+
+        $document->referenceAttachments()->create([
+            'title' => pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME),
+            'disk' => 'documents',
+            'file_path' => $path,
+            'original_filename' => $file->getClientOriginalName(),
+            'mime_type' => $file->getClientMimeType(),
+            'file_size_bytes' => $file->getSize(),
+            'uploaded_by' => $uploader->id,
+        ]);
     }
 
     /**
@@ -392,6 +433,8 @@ class DocumentController extends Controller
             })
             ->take(5);
 
+        $commentsLocked = $document->commentsLockedFor(request()->user());
+
         // Page-anchored comment pins, grouped by page number, in the shape the PDF
         // viewer's Alpine component expects: { "1": [ {id, x_position, ...} ], ... }
         $pdfAnnotationsByPage = $document->pdfAnnotations
@@ -406,7 +449,8 @@ class DocumentController extends Controller
                     'highlight_rects' => $c->highlight_rects,
                     'body' => $c->body,
                     'edited' => $c->edited_at !== null,
-                    'can_edit' => $c->user_id === auth()->id(),
+                    'draft' => $c->published_at === null,
+                    'can_edit' => $c->user_id === auth()->id() && ! $commentsLocked,
                     'created_at' => $c->created_at->diffForHumans(),
                     'created_at_iso' => $c->created_at->toIso8601String(),
                     'author' => ['name' => $c->author?->name],
@@ -421,7 +465,8 @@ class DocumentController extends Controller
                         'id' => $r->id,
                         'body' => $r->body,
                         'edited' => $r->edited_at !== null,
-                        'can_edit' => $r->user_id === auth()->id(),
+                        'draft' => $r->published_at === null,
+                        'can_edit' => $r->user_id === auth()->id() && ! $commentsLocked,
                         'created_at' => $r->created_at->diffForHumans(),
                         'created_at_iso' => $r->created_at->toIso8601String(),
                         'author' => ['name' => $r->author?->name],
@@ -472,7 +517,7 @@ class DocumentController extends Controller
         return view('documents.show', compact(
             'document', 'availableClaims', 'availableModules', 'suggestedClaims', 'pdfAnnotationsByPage',
             'videoAnnotations', 'latestComplianceInsight', 'latestRevisionInsight', 'latestRetrievalRequest',
-            'claimReferenceMappingsByPage', 'availableProjects', 'observableUsers'
+            'claimReferenceMappingsByPage', 'availableProjects', 'observableUsers', 'commentsLocked'
         ))->with('aiAvailable', $this->ai->isAvailable())
             ->with('wordEditorRole', WordReviewController::editorRole($document, request()->user()));
     }
@@ -490,6 +535,21 @@ class DocumentController extends Controller
 
         $instance = $document->activeWorkflowInstance;
         $awaitingRevision = $document->status === 'approved_with_changes_pending';
+
+        // The Content Manager aligned the draft; the Brand Manager now sends the
+        // creative (whoever uploaded it) on into review. A fresh upload is optional.
+        if ($document->status === 'draft_aligned' && $instance) {
+            $document->assertNotOnLegalHold();
+            $request->validate(['file' => ['nullable', 'file', 'max:512000']]);
+
+            $version = $request->hasFile('file')
+                ? $this->versionService->storeNewVersion($document, $request->file('file'), $request->user(), $request->input('change_notes', 'Creative uploaded by the Brand Manager'))
+                : $document->currentVersion;
+
+            $this->engine->continueAfterDraft($instance, $version, $request->user());
+
+            return back()->with('status', 'Review started - it is now with the next stage.');
+        }
 
         // A "running" instance is expected here when we're re-submitting after an
         // AwC/NA revision loop (the instance never stopped running, it's just parked
@@ -642,17 +702,22 @@ class DocumentController extends Controller
 
     /**
      * Manual lifecycle transitions that sit outside the approval workflow itself -
-     * marking a fully-approved document "Approved for Production" vs. "Approved for
-     * Distribution", or retiring one as superseded/obsolete once it's no longer current.
+     * releasing produced material for distribution, or retiring a document as
+     * superseded/obsolete once it's no longer current. "Approved for Production" is
+     * never set by hand: only the Chairperson's sign-off (the workflow) sets it.
      */
     public function updateStatus(Request $request, Document $document)
     {
         $validated = $request->validate([
-            'status' => ['required', 'in:approved_for_production,superseded,obsolete,archived'],
+            'status' => ['required', 'in:approved_for_distribution,superseded,obsolete,archived'],
         ]);
 
         $this->authorize('update', $document);
         $document->assertNotOnLegalHold();
+
+        if ($validated['status'] === 'approved_for_distribution' && $document->status !== 'approved_for_production') {
+            throw ValidationException::withMessages(['status' => 'Only material Approved for Production (after the Chairperson) can be released for distribution.']);
+        }
 
         $oldStatus = $document->status;
         $document->update(['status' => $validated['status']]);
@@ -667,6 +732,13 @@ class DocumentController extends Controller
 
         $this->notifyStakeholders($document, 'lifecycle_changed', $request->user());
 
+        if ($validated['status'] === 'approved_for_distribution') {
+            $lastInstance = $document->workflowInstances()->latest('id')->first();
+            if ($lastInstance) {
+                \App\Events\DocumentFinalApproved::dispatch($document, $lastInstance, $request->user());
+            }
+        }
+
         return back()->with('status', "Document marked \"{$document->statusLabel()}\".");
     }
 
@@ -680,7 +752,7 @@ class DocumentController extends Controller
         abort_unless(
             $request->user()->id === $document->owner_id || $request->user()->can('access-admin'),
             403,
-            'Only the document owner or an admin can change editing access.'
+            'Only the Brand Manager who owns this job or an admin can change editing access.'
         );
 
         $validated = $request->validate([
@@ -1120,63 +1192,26 @@ class DocumentController extends Controller
     }
 
     /**
-     * Wire a fresh set of transitions for a customised private flow, one primary
-     * per parallel group: approved -> next stage (or complete at the end), and
-     * AwC/NA -> back to the owner to revise (NA at the very first stage is a hard
-     * stop). Mirrors Database\Seeders\Concerns\WiresLinearApprovalChain's
-     * reviseWithOwner wiring.
+     * Wire a fresh set of transitions for a customised private flow with the
+     * standard routing rules - see App\Support\Workflow\TransitionWiring.
      *
      * @param  array<int, WorkflowStage>  $ordered
      */
     protected function rebuildTransitions(array $ordered): void
     {
         $ids = collect($ordered)->pluck('id');
-        WorkflowTransition::whereIn('workflow_stage_id', $ids)->delete();
         WorkflowStage::whereIn('id', $ids)->update(['is_final_distribution_stage' => false]);
-
-        $firstId = $ordered[0]->id;
-        $lastIndex = count($ordered) - 1;
-        $groupPrimary = [];
-
-        foreach ($ordered as $i => $stage) {
-            $isLast = $i === $lastIndex;
-
-            if ($stage->parallel_group) {
-                if (isset($groupPrimary[$stage->parallel_group])) {
-                    continue; // non-primary group members are driven by the primary
-                }
-                $groupPrimary[$stage->parallel_group] = $stage->id;
-            }
-
-            if ($isLast) {
-                $stage->update(['is_final_distribution_stage' => true]);
-            }
-
-            WorkflowTransition::create([
-                'workflow_stage_id' => $stage->id,
-                'decision' => 'approved',
-                'outcome_type' => $isLast ? 'complete_approved' : 'next_stage',
-            ]);
-
-            WorkflowTransition::create([
-                'workflow_stage_id' => $stage->id,
-                'decision' => 'approved_with_changes',
-                'outcome_type' => 'return_to_owner',
-                'resume_at_stage_id' => $stage->id,
-            ]);
-
-            WorkflowTransition::create([
-                'workflow_stage_id' => $stage->id,
-                'decision' => 'not_approved',
-                'outcome_type' => $stage->id === $firstId ? 'terminate_rejected' : 'return_to_owner',
-                'resume_at_stage_id' => $stage->id === $firstId ? null : $stage->id,
-            ]);
+        if ($last = end($ordered)) {
+            $last->update(['is_final_distribution_stage' => true]);
         }
+
+        \App\Support\Workflow\TransitionWiring::wire(collect($ordered)->map->fresh());
     }
 
     /**
      * Every chosen person must be an active user who may take approval tasks
-     * (Brand Managers start and assign jobs but never approve).
+     * (Brand Managers start and assign jobs but never approve; the job's own owner
+     * never reviews it).
      *
      * @param  \Illuminate\Support\Collection<int, int>  $userIds
      */
@@ -1190,6 +1225,11 @@ class DocumentController extends Controller
 
         if ($bm = $users->first(fn ($u) => $u->isBrandManagerOnly())) {
             throw ValidationException::withMessages([$errorKey => "{$label}: {$bm->name} is a Brand Manager and can't approve or reject."]);
+        }
+
+        // The person creating the job owns it - makers can't be checkers.
+        if ($self = $users->firstWhere('id', auth()->id())) {
+            throw ValidationException::withMessages([$errorKey => "{$label}: you own this job, so you can't also review it."]);
         }
     }
 

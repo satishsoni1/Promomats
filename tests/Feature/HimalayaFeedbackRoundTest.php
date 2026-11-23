@@ -237,6 +237,7 @@ class HimalayaFeedbackRoundTest extends TestCase
             'workflow_template_id' => $template->id,
             'channel' => 'print',
             'is_placeholder' => '1',
+            'creative_team' => 'design',
             'design_instructions' => 'A3 poster, key claim from the brief.',
             'due_date' => now()->addMonths(18)->toDateString(), // may be past expiry
             'expiry_date' => now()->addYear()->toDateString(),
@@ -351,9 +352,10 @@ class HimalayaFeedbackRoundTest extends TestCase
         $this->actingAs($cm)->get(route('workflow.active'))->assertOk()->assertSee('Pilex LBL');
 
         $this->engine->recordDecision($instance, $cm, 'approved_with_changes', 'Tweak');
-        $this->actingAs($owner)->get(route('workflow.active'))->assertOk()->assertSee('Revisions waiting on you')->assertSee('Pilex LBL');
+        $this->actingAs($owner)->get(route('workflow.active'))->assertOk()->assertSee('Your jobs waiting on you')->assertSee('Pilex LBL');
         $this->actingAs($owner)->get(route('workflow.active', ['tab' => 'mine']))->assertOk()->assertSee('revision needed');
-        $this->actingAs($owner)->get(route('documents.show', $document))->assertOk()->assertSee('Send to Design Team');
+        $this->actingAs($owner)->get(route('documents.show', $document))->assertOk()
+            ->assertSee('Send to Internal Design Team')->assertSee('Send to Content Agency');
     }
 
     public function test_helpdesk_ticket_is_logged_and_emailed(): void

@@ -41,6 +41,16 @@ class WorkflowStage extends Model
         return $this->stage_type === 'draft';
     }
 
+    /**
+     * An offline sign-off (the Chairperson): the approver never uses PromoMats, so
+     * the stage's assignee (the Content Manager) uploads the signed / commented copy
+     * received offline and records the outcome on their behalf.
+     */
+    public function isOffline(): bool
+    {
+        return $this->stage_type === 'offline';
+    }
+
     public function transitionFor(string $decision): ?WorkflowTransition
     {
         return $this->transitions()->where('decision', $decision)->first();

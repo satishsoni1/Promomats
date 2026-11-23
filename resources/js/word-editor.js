@@ -5,9 +5,12 @@
  * browser - no document server - so there's no limit on concurrent reviewers.
  *
  * What the user may do comes from the server (WordReviewController::editorRole):
- *   suggester view, comment, and suggest - every edit becomes a tracked change
- *             (Word's "Suggesting"); there is no direct-editing mode
- *   viewer    read-only, tracked changes + comments shown (legal hold)
+ *   editor    the Brand Manager who owns the job: everything a suggester can do,
+ *             plus accept / reject the stakeholders' tracked changes
+ *   suggester every other stakeholder: comment, highlight (annotate) and suggest -
+ *             every edit becomes a tracked change (Word's "Suggesting")
+ *   viewer    read-only, tracked changes + comments shown (legal hold, or a
+ *             reviewer who has already submitted their review)
  *
  * SuperDoc (~several MB) is loaded on demand, so pages without a Word document
  * never download it.
@@ -54,12 +57,16 @@ export default function wordReviewEditor({ fileUrl, saveUrl, csrfToken, baseVers
                     ui: {
                         toolbar: {
                             container: this.$refs.toolbar,
-                            // Review-only toolbar: no fonts/formatting/tables/images - just
-                            // navigation and the Suggesting/Viewing switch.
+                            // Review toolbar: no fonts/tables/images. Stakeholders can
+                            // highlight text to annotate it (recorded as a tracked
+                            // change, alongside comments); the job owner can also
+                            // accept / reject tracked changes.
                             items: {
-                                left: ['undo', 'redo'],
-                                center: ['zoom', 'search'],
-                                right: role === 'viewer' ? [] : ['document-mode'],
+                                left: role === 'viewer' ? [] : ['undo', 'redo'],
+                                center: role === 'viewer' ? ['zoom', 'search'] : ['zoom', 'search', 'highlight-color'],
+                                right: role === 'editor'
+                                    ? ['track-changes-accept-selection', 'track-changes-reject-selection', 'document-mode']
+                                    : (role === 'viewer' ? [] : ['document-mode']),
                             },
                             responsiveTo: 'container',
                         },

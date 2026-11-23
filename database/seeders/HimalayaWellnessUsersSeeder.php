@@ -45,7 +45,7 @@ class HimalayaWellnessUsersSeeder extends Seeder
             ['name' => 'Dhanu', 'email' => 'dhanu@himalayawellness.com', 'dept' => 'Marketing', 'roles' => ['Brand Manager', 'Regulatory']],
             ['name' => 'Smriti', 'email' => 'smriti.singh@himalayawellness.com', 'dept' => 'Regulatory', 'roles' => ['Regulatory']],
             ['name' => 'Akansha', 'email' => 'akansha.thakur@himalayawellness.com', 'dept' => 'Medical', 'roles' => ['Medical']],
-            ['name' => 'Monika', 'email' => 'monika.pant@himalayawellness.com', 'dept' => 'Content', 'roles' => ['Document Owner']],
+            ['name' => 'Monika', 'email' => 'monika.pant@himalayawellness.com', 'dept' => 'Content', 'roles' => ['Brand Manager']],
             ['name' => 'Deepak', 'email' => 'deepak.db@himalayawellness.com', 'dept' => 'Content', 'roles' => ['Content Creator']],
             ['name' => 'Rathna', 'email' => 'rathna.b@himalayawellness.com', 'dept' => 'Content', 'roles' => ['Content Manager']],
             ['name' => 'Jalba', 'email' => 'jalba.rc@himalayawellness.com', 'dept' => 'Content', 'roles' => ['Content Manager']],

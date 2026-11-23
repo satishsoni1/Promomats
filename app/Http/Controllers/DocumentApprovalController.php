@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\DocumentWorkflowInstance;
+use App\Services\Audit\AuditLogger;
+use App\Services\DocumentVersionService;
 use App\Services\WorkflowEngine;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -10,7 +12,11 @@ use Illuminate\Validation\ValidationException;
 
 class DocumentApprovalController extends Controller
 {
-    public function __construct(protected WorkflowEngine $engine) {}
+    public function __construct(
+        protected WorkflowEngine $engine,
+        protected DocumentVersionService $versions,
+        protected AuditLogger $audit,
+    ) {}
 
     /**
      * "My pending approvals" inbox - every document waiting on the logged-in user, across all workflows.
@@ -38,10 +44,18 @@ class DocumentApprovalController extends Controller
     {
         $requirePassword = config('promomats.approvals.require_password', false);
 
+        // Offline sign-off (the Chairperson): the Content Manager holding the stage
+        // uploads the copy signed / commented offline and records its outcome.
+        $myStage = $instance->pendingAssignees()->where('user_id', $request->user()->id)->first()?->stage;
+        $isOffline = (bool) $myStage?->isOffline();
+
         $validated = $request->validate([
             'decision' => ['required', 'in:approved,approved_with_changes,not_approved'],
             'comments' => ['nullable', 'string', 'max:5000'],
             'password' => [$requirePassword ? 'required' : 'nullable', 'string'],
+            'signed_copy' => [$isOffline && $request->input('decision') !== 'not_approved' ? 'required' : 'nullable', 'file', 'max:512000'],
+        ], [
+            'signed_copy.required' => 'Upload the copy approved by the Chairperson to record this outcome.',
         ]);
 
         if ($requirePassword && ! Hash::check($validated['password'], $request->user()->password)) {
@@ -53,6 +67,20 @@ class DocumentApprovalController extends Controller
         // comments required for anything other than a clean approval - standard pharma audit practice
         if ($validated['decision'] !== 'approved' && blank($validated['comments'] ?? null)) {
             return back()->withErrors(['comments' => 'Comments are required when approving with changes or rejecting.']);
+        }
+
+        if ($isOffline && $request->hasFile('signed_copy')) {
+            $document = $instance->document;
+            $document->assertNotOnLegalHold();
+            $version = $this->versions->storeNewVersion(
+                document: $document,
+                file: $request->file('signed_copy'),
+                uploader: $request->user(),
+                changeNotes: "{$myStage->name}: copy received offline, uploaded by {$request->user()->name}",
+            );
+            $this->audit->record(action: 'VERSION_CREATED', document: $document, version: $version, actor: $request->user(), description: 'Offline sign-off copy uploaded.');
+            // The signed record points at the copy that was actually signed off.
+            $this->engine->adoptNewVersion($instance, $version);
         }
 
         $this->engine->recordDecision(

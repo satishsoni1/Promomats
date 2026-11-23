@@ -24,23 +24,25 @@ class WordReviewController extends Controller
     ) {}
 
     /**
-     * What the editor lets this user do, mirroring the rest of the app:
-     *  - legal hold: read-only (tracked changes and comments visible)
-     *  - may upload versions (owner, admin, agency, dept editor): full editing,
-     *    including accepting/rejecting others' tracked changes
-     *  - everyone else (reviewers): suggesting only - every edit is a tracked
-     *    change, plus comments
+     * What the editor lets this user do:
+     *  - legal hold, or a reviewer who has already submitted their review while
+     *    the job is with someone else: read-only (tracked changes and comments shown)
+     *  - the Brand Manager who owns the job (and admins): editor - besides
+     *    suggesting, they can accept / reject the stakeholders' tracked changes
+     *  - every other stakeholder: suggester - each edit is a tracked change, plus
+     *    comments and highlight annotations
      * The editor enforces this client-side; store() re-checks what it can.
      */
     public static function editorRole(Document $document, User $user): string
     {
-        if ($document->legal_hold) {
+        if ($document->legal_hold || $document->commentsLockedFor($user)) {
             return 'viewer';
         }
 
-        // In-browser review is view / comment / suggest only - nobody edits the
-        // document directly here. Direct edits and accepting/rejecting suggestions
-        // happen in desktop Word, uploaded as a new version.
+        if ($user->id === $document->owner_id || $user->can('access-admin')) {
+            return 'editor';
+        }
+
         return 'suggester';
     }
 
@@ -48,6 +50,7 @@ class WordReviewController extends Controller
     {
         $this->authorize('view', $document);
         $document->assertNotOnLegalHold();
+        abort_if($document->commentsLockedFor($request->user()), 403, 'You have already submitted your review of this job.');
 
         $validated = $request->validate([
             'file' => ['required', 'file', 'mimes:docx', 'max:512000'],

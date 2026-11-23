@@ -25,6 +25,7 @@ export default function pdfAnnotationViewer({
     pdfUrl, isImage = false, csrfToken, storeUrl, initialAnnotations,
     mappingStoreUrl, mappingDestroyUrlBase, documentClaims, documentReferences, initialMappings,
     pdfEditStoreUrl, originalFilename, resolveUrlTemplate, commentUpdateUrlTemplate,
+    commentsLocked = false,
 }) {
     // Deliberately kept OUTSIDE the returned Alpine data object, in closure scope: Alpine
     // makes every property on x-data reactive by wrapping it in a Proxy, and pdf.js's
@@ -53,6 +54,8 @@ export default function pdfAnnotationViewer({
         error: null,
         annotations: initialAnnotations || {},
         posting: false,
+        // The reviewer already submitted their review: read-only for them.
+        commentsLocked,
 
         // Comment state. `selectedId` is the thread open in the side panel;
         // `composer` is a new comment being written (anchored where it was placed).
@@ -403,6 +406,10 @@ export default function pdfAnnotationViewer({
         // ---- new comment (composer lives in the side panel) ----
 
         openComposer(anchor) {
+            if (this.commentsLocked) {
+                alert('You have already submitted your review, so commenting is locked while the job is with other stakeholders.');
+                return;
+            }
             this.composer = { ...anchor, x: +(+anchor.x).toFixed(2), y: +(+anchor.y).toFixed(2) };
             this.selectedId = null;
             this.newBody = '';
@@ -504,6 +511,7 @@ export default function pdfAnnotationViewer({
                     can_resolve: true,
                     can_edit: true,
                     edited: false,
+                    draft: !!comment.draft,
                     replies: [],
                 });
                 this.cancelComposer();

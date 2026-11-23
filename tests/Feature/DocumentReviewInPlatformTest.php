@@ -140,14 +140,15 @@ class DocumentReviewInPlatformTest extends TestCase
 
     // ---- Word: SuperDoc in-browser review ----
 
-    public function test_editor_role_is_suggest_only_and_read_only_under_legal_hold(): void
+    public function test_editor_role_is_suggest_for_stakeholders_editor_for_the_owner_and_read_only_under_legal_hold(): void
     {
         $owner = User::factory()->create();
         $reviewer = User::factory()->create();
         $document = $this->documentWithFile($owner, 'leaflet.docx');
 
-        // Nobody - not even the owner - gets direct editing in the browser.
-        $this->assertSame('suggester', WordReviewController::editorRole($document, $owner));
+        // Stakeholders suggest (tracked changes, comments, highlights); the Brand
+        // Manager who owns the job can also accept / reject those changes.
+        $this->assertSame('editor', WordReviewController::editorRole($document, $owner));
         $this->assertSame('suggester', WordReviewController::editorRole($document, $reviewer));
 
         $document->forceFill(['legal_hold' => true])->save();

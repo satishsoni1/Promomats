@@ -50,5 +50,9 @@ class DatabaseSeeder extends Seeder
         // Himalaya UAT feedback round: Design Team, Print/Digital collateral types,
         // revised PromoMats workflows with Draft stages and owner-picked stakeholders.
         $this->call(HimalayaFeedbackRoundSeeder::class);
+
+        // Himalaya UAT round 2: parallel MLR (incl. Pharma Workflow 1/2), draft
+        // alignment handed back to the Brand Manager, offline Chairperson sign-off.
+        $this->call(HimalayaUatRoundTwoSeeder::class);
     }
 }

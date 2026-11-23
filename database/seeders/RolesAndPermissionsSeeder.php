@@ -33,7 +33,9 @@ class RolesAndPermissionsSeeder extends Seeder
             'Admin' => true,
             'Department Admin' => false,
             'TM/AGM Marketing' => false,
-            'Document Owner' => false,
+            // Brand Managers own the jobs (the old "Document Owner" role is the same
+            // thing): they start, upload and assign - they never approve.
+            'Brand Manager' => false,
             'Content Manager' => false,
             'Content Creator (Int/Ext)' => false,
             'Content Agency' => false,
@@ -60,9 +62,13 @@ class RolesAndPermissionsSeeder extends Seeder
                 $role->permissions()->sync(
                     Permission::whereIn('slug', ['manage-users', 'manage-workflows', 'view-all-documents', 'view-reports'])->pluck('id')
                 );
-            } elseif (in_array($name, ['TM/AGM Marketing', 'Document Owner'])) {
+            } elseif ($name === 'TM/AGM Marketing') {
                 $role->permissions()->sync(
                     Permission::whereIn('slug', ['upload-documents', 'view-all-documents', 'approve-documents'])->pluck('id')
+                );
+            } elseif ($name === 'Brand Manager') {
+                $role->permissions()->sync(
+                    Permission::whereIn('slug', ['upload-documents', 'view-all-documents'])->pluck('id')
                 );
             } else {
                 $role->permissions()->sync(

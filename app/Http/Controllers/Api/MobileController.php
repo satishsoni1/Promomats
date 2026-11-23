@@ -79,13 +79,14 @@ class MobileController extends Controller
                 'document' => $this->documentSummary($a->instance->document),
                 'stage' => $a->stage->name,
                 'is_draft' => $a->stage->isDraft(),
+                'is_offline' => $a->stage->isOffline(),
                 'due_at' => $a->dueAt()?->toIso8601String(),
                 'is_overdue' => $a->isOverdue(),
                 'is_due_soon' => $a->isDueSoon(),
             ]);
 
         $revisions = Document::where('owner_id', $user->id)
-            ->where('status', 'approved_with_changes_pending')
+            ->whereIn('status', Document::OWNER_ACTION_STATUSES)
             ->with('owner', 'documentType')
             ->latest('status_changed_at')
             ->get()
@@ -129,6 +130,7 @@ class MobileController extends Controller
                 'selected_text' => $c->selected_text,
                 'replacement_text' => $c->replacement_text,
                 'resolved' => $c->resolved_at !== null,
+                'draft' => $c->published_at === null,
                 'created_at' => $c->created_at->toIso8601String(),
                 'replies' => $c->replies->map(fn ($r) => ['id' => $r->id, 'author' => $r->author?->name, 'body' => $r->body, 'created_at' => $r->created_at->toIso8601String()]),
             ]);
@@ -185,6 +187,11 @@ class MobileController extends Controller
         $instance = $document->activeWorkflowInstance;
         abort_unless($instance, 422, 'This document is not in review.');
 
+        $myStage = $instance->pendingAssignees()->where('user_id', $request->user()->id)->first()?->stage;
+        if ($myStage?->isOffline() && $validated['decision'] !== 'not_approved') {
+            throw ValidationException::withMessages(['decision' => "\"{$myStage->name}\" needs the signed copy uploaded - please record it on the web."]);
+        }
+
         $this->engine->recordDecision($instance, $request->user(), $validated['decision'], $validated['comments'] ?? null, $request->ip());
 
         return response()->json(['ok' => true, 'status' => $document->fresh()->status]);
@@ -199,9 +206,13 @@ class MobileController extends Controller
             'parent_id' => ['nullable', 'integer'],
         ]);
 
+        abort_if($document->commentsLockedFor($request->user()), 403, 'You have already submitted your review of this job, so commenting is locked.');
+
         if (! empty($validated['parent_id'])) {
             abort_unless(DocumentComment::where('id', $validated['parent_id'])->where('document_id', $document->id)->exists(), 422);
         }
+
+        $isDraft = $document->commentsStartAsDraftFor($request->user());
 
         $comment = DocumentComment::create([
             'document_id' => $document->id,
@@ -209,9 +220,10 @@ class MobileController extends Controller
             'parent_id' => $validated['parent_id'] ?? null,
             'user_id' => $request->user()->id,
             'body' => $validated['body'],
+            'published_at' => $isDraft ? null : now(),
         ]);
 
-        return response()->json(['id' => $comment->id], 201);
+        return response()->json(['id' => $comment->id, 'draft' => $isDraft], 201);
     }
 
     /**

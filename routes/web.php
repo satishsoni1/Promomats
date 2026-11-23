@@ -104,6 +104,7 @@ Route::middleware(['auth'])->group(function () {
 
     // Design Team umbrella work (placeholder artwork, rework after Approved with changes).
     Route::post('/documents/{document}/work-tasks', [WorkTaskController::class, 'store'])->name('documents.work-tasks.store');
+    Route::post('/documents/{document}/placeholder-assign', [WorkTaskController::class, 'assignPlaceholder'])->name('documents.placeholder.assign');
     Route::post('/work-tasks/{task}/take', [WorkTaskController::class, 'take'])->name('work-tasks.take');
     Route::post('/work-tasks/{task}/assign', [WorkTaskController::class, 'assign'])->name('work-tasks.assign');
     Route::post('/work-tasks/{task}/complete', [WorkTaskController::class, 'complete'])->name('work-tasks.complete');

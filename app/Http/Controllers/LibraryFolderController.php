@@ -29,6 +29,12 @@ class LibraryFolderController extends Controller
 
     protected function render(Request $request, ?LibraryFolder $folder)
     {
+        // "All the jobs should be visible in the Library": the Jobs tab lists every
+        // job this person can see - in progress (as a stakeholder) and approved.
+        if (! $folder && $request->query('view') === 'jobs') {
+            return $this->jobs($request);
+        }
+
         $subfolders = LibraryFolder::withCount(['children', 'files'])
             ->with('creator')
             ->where('parent_id', $folder?->id)
@@ -72,6 +78,31 @@ class LibraryFolderController extends Controller
             : Document::where('owner_id', $request->user()->id)->orderByDesc('updated_at')->limit(50)->get(['id', 'title']);
 
         return view('library.folders.index', compact('folder', 'subfolders', 'files', 'owners', 'breadcrumbs', 'targetDocument', 'myDocuments'));
+    }
+
+    protected function jobs(Request $request)
+    {
+        $stage = $request->query('stage', 'all'); // all | progress | approved
+        $base = fn () => Document::visibleTo($request->user());
+
+        $jobs = $base()
+            ->with(['owner', 'documentType', 'brand'])
+            ->when($stage === 'progress', fn ($q) => $q->whereIn('status', \App\Http\Controllers\ActiveWorkflowController::ACTIVE_STATUSES))
+            ->when($stage === 'approved', fn ($q) => $q->whereIn('status', Document::LIBRARY_STATUSES))
+            ->when($request->filled('q'), fn ($q) => $q->where(fn ($w) => $w
+                ->where('title', 'like', '%' . $request->q . '%')
+                ->orWhere('reference_no', 'like', '%' . $request->q . '%')))
+            ->latest('updated_at')
+            ->paginate(30)
+            ->withQueryString();
+
+        $counts = [
+            'all' => $base()->count(),
+            'progress' => $base()->whereIn('status', \App\Http\Controllers\ActiveWorkflowController::ACTIVE_STATUSES)->count(),
+            'approved' => $base()->whereIn('status', Document::LIBRARY_STATUSES)->count(),
+        ];
+
+        return view('library.jobs', compact('jobs', 'stage', 'counts'));
     }
 
     public function store(Request $request)

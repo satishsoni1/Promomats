@@ -241,7 +241,7 @@
                                     <div class="flex items-start justify-between gap-3">
                                         <div>
                                             <p class="text-sm font-semibold text-gray-800">Stakeholders &amp; due dates for each stage</p>
-                                            <p class="text-xs text-gray-500 mt-0.5">Tick the person (or people) who should take each stage — e.g. Jalba or Rathna for Content Manager, the right TM/AGM, this brand's Medical / Regulatory / Legal reviewers. Add anyone else if needed. Each stage gets {{ $defaultDueHours }} hours by default.</p>
+                                            <p class="text-xs text-gray-500 mt-0.5">Tick the person (or people) who should take each stage — e.g. Jalba or Rathna for Content Manager, the right TM/AGM, this brand's R&amp;D / Regulatory / Legal reviewers. Add anyone else if needed. Each stage gets {{ $defaultDueHours }} hours by default. You own this job, so you can't be picked as a reviewer.</p>
                                         </div>
                                         <button type="button" class="shrink-0 text-xs px-2.5 py-1 bg-white border border-brand-300 text-brand-700 rounded-md hover:bg-brand-50" @click="openEditor()">Edit stages…</button>
                                     </div>
@@ -286,7 +286,9 @@
                                                         <option :value="u.id" x-text="u.name"></option>
                                                     </template>
                                                 </select>
-                                                <span class="text-[11px] text-gray-400">Leave everyone unticked to send it to all of them (first to act decides).</span>
+                                                <span class="text-[11px] text-gray-400" x-text="stage.parallel_group
+                                                    ? 'MLR stakeholders run in parallel. Only the tracks you tick someone for are sent — tracks left unticked are skipped (leave every MLR track unticked to send to all reviewers).'
+                                                    : 'Leave everyone unticked to send it to all of them (first to act decides).'"></span>
                                             </div>
                                         </div>
                                     </template>
@@ -406,14 +408,24 @@
                         <label class="flex items-start gap-2.5 rounded-md border border-gray-200 p-3 cursor-pointer has-[:checked]:border-violet-300 has-[:checked]:bg-violet-50/50">
                             <input type="checkbox" name="is_placeholder" value="1" x-model="placeholder" class="mt-0.5 rounded border-gray-300 text-violet-600">
                             <span>
-                                <span class="block text-sm font-medium text-gray-800">Placeholder — the Design Team will upload the artwork</span>
-                                <span class="block text-xs text-gray-500">Creates the job without a file and sends it to the whole Design Team, who assign it to a designer. You're notified when the artwork is in.</span>
+                                <span class="block text-sm font-medium text-gray-800">Placeholder — no file yet</span>
+                                <span class="block text-xs text-gray-500">Creates the job without a file. Upload the Word draft later for Content Manager alignment, or hand the brief to the Content Agency / Internal Design Team. Their upload always comes back to you.</span>
                             </span>
                         </label>
 
-                        <div x-show="placeholder" x-cloak>
-                            <x-input-label for="design_instructions" value="Brief for the Design Team" />
-                            <textarea id="design_instructions" name="design_instructions" rows="3" class="mt-1 block w-full text-sm border-gray-300 rounded-md" placeholder="Sizes, key message, claims to use, reference files…">{{ old('design_instructions') }}</textarea>
+                        <div x-show="placeholder" x-cloak class="space-y-3">
+                            <div>
+                                <x-input-label for="creative_team" value="Who prepares the creative?" />
+                                <select id="creative_team" name="creative_team" class="mt-1 block w-full text-sm border-gray-300 rounded-md">
+                                    <option value="later" @selected(old('creative_team', 'later') === 'later')>Decide later — I'll upload the Word draft for Content Manager alignment first</option>
+                                    <option value="agency" @selected(old('creative_team') === 'agency')>Send the brief to the Content Agency now</option>
+                                    <option value="design" @selected(old('creative_team') === 'design')>Send the brief to the Internal Design Team now</option>
+                                </select>
+                            </div>
+                            <div>
+                                <x-input-label for="design_instructions" value="Brief" />
+                                <textarea id="design_instructions" name="design_instructions" rows="3" class="mt-1 block w-full text-sm border-gray-300 rounded-md" placeholder="Sizes, key message, claims to use, reference files…">{{ old('design_instructions') }}</textarea>
+                            </div>
                         </div>
 
                         <div x-show="! placeholder">
@@ -423,6 +435,15 @@
                             </div>
                         </div>
                         <x-input-error :messages="$errors->get('file')" class="mt-2" />
+
+                        <div>
+                            <x-input-label for="reference_files" value="Reference documents (optional)" />
+                            <input type="file" id="reference_files" name="reference_files[]" multiple
+                                   class="mt-1 block w-full text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200">
+                            <p class="mt-1 text-xs text-gray-500">Studies, sources or the print input brief that support the content — attached to the job for every reviewer. You can add more later.</p>
+                            <x-input-error :messages="$errors->get('reference_files')" class="mt-1" />
+                            <x-input-error :messages="$errors->get('reference_files.*')" class="mt-1" />
+                        </div>
                     </div>
 
                     <div class="flex items-center gap-4">

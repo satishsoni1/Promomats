@@ -9,6 +9,10 @@
     <div class="py-12">
         <div class="max-w-6xl mx-auto sm:px-6 lg:px-8 space-y-6">
 
+            @unless ($targetDocument || $folder)
+                @include('library.partials.tabs', ['active' => 'files'])
+            @endunless
+
             @if ($targetDocument)
                 <div class="bg-brand-50 border border-brand-100 text-brand-900 text-sm rounded-lg p-4">
                     Browsing to attach a file to <strong>{{ $targetDocument->title }}</strong>.

@@ -13,8 +13,14 @@
     $openSeqs = $openRuns->pluck('stage.sequence_no');
     $currentSeq = $instance?->currentStage?->sequence_no;
     $isRejected = $document->status === 'rejected';
-    $isFullyApproved = in_array($document->status, ['approved', 'approved_for_distribution']);
+    $isFullyApproved = in_array($document->status, ['approved', 'approved_for_production', 'approved_for_distribution']);
     $lastActionSeq = $document->approvalActions->first()?->stage?->sequence_no;
+    // Stages resolved without anyone ever being assigned were skipped (an MLR track
+    // the Brand Manager didn't pick, or a stage whose condition didn't apply).
+    $skippedStageIds = $instance
+        ? $instance->stageRuns->where('status', 'resolved')->pluck('workflow_stage_id')
+            ->diff($instance->assignees()->pluck('workflow_stage_id'))->values()
+        : collect();
 
     $cardClass = 'bg-white rounded-xl border border-gray-200/80 p-6';
 
@@ -23,13 +29,31 @@
     $canUploadVersion = $user->can('uploadVersion', $document);
     $openWorkTask = $document->workTasks->firstWhere('status', 'open');
     $isParked = $document->status === 'approved_with_changes_pending';
+    // Content Manager aligned the draft: back with the Brand Manager to commission the creative.
+    $isDraftAligned = $document->status === 'draft_aligned';
+    $isBackWithOwner = $isParked || $isDraftAligned;
     $requirePassword = config('promomats.approvals.require_password', false);
     $myStageIsDraft = $myAssignment?->stage?->isDraft();
+    $myStageIsOffline = $myAssignment?->stage?->isOffline();
+    $myStageIsFinal = $myAssignment && ! $myAssignment->stage->nextStage();
+    $commentsLocked = $document->commentsLockedFor($user);
+    $commentsAreDraft = $document->commentsStartAsDraftFor($user);
+    $firstStageIsDraft = (bool) $document->workflowTemplate?->stages->first()?->isDraft();
+    // A file uploaded since the job came back (e.g. by the Content Agency) for the Brand Manager to confirm.
+    $uploadToConfirm = $isBackWithOwner && $instance && $document->current_version_id !== $instance->document_version_id
+        ? $document->currentVersion : null;
     $reassignOptions = $canManageTasks && $instance
-        ? \App\Models\User::with('roles')->where('is_active', true)->orderBy('name')->get(['id', 'name'])->filter(fn ($u) => $u->canRecordDecisions())
+        ? \App\Models\User::with('roles')->where('is_active', true)->orderBy('name')->get(['id', 'name'])
+            ->filter(fn ($u) => $u->canRecordDecisions() && $u->id !== $document->owner_id)
         : collect();
-    $designTeam = ($canManageTasks || $user->isDesignTeam()) ? \App\Models\User::designTeam()->get(['id', 'name']) : collect();
+    $teamMembers = $canManageTasks
+        ? ['design' => \App\Models\User::teamMembers('design')->get(['id', 'name']), 'agency' => \App\Models\User::teamMembers('agency')->get(['id', 'name'])]
+        : ['design' => collect(), 'agency' => collect()];
     $lastDecision = $document->approvalActions->first();
+    // "Approved for Production" comes only from the Chairperson sign-off; once
+    // produced, the owner can release it for distribution.
+    $lifecycleActions = ($document->status === 'approved_for_production' ? ['approved_for_distribution' => 'Release for Distribution'] : [])
+        + ['superseded' => 'Mark Superseded', 'obsolete' => 'Mark Obsolete', 'archived' => 'Archive'];
 @endphp
 <x-app-layout>
     <x-slot name="header">
@@ -120,6 +144,8 @@
                                     $state = 'done';
                                 } elseif ($isRejected) {
                                     $state = $lastActionSeq && $stage->sequence_no <= $lastActionSeq ? 'rejected' : 'upcoming';
+                                } elseif ($skippedStageIds->contains($stage->id)) {
+                                    $state = 'skipped';
                                 } elseif ($openSeqs->contains($stage->sequence_no)) {
                                     $state = 'current';
                                 } elseif ($isParked && $instance && ($stage->parallel_group ? $stage->parallel_group === $instance->currentStage?->parallel_group : $stage->id === $instance->current_stage_id)) {
@@ -134,6 +160,7 @@
                                     'current' => 'bg-accent-500 text-white ring-4 ring-accent-100',
                                     'rejected' => 'bg-red-500 text-white',
                                     'returned' => 'bg-amber-400 text-white ring-4 ring-amber-100',
+                                    'skipped' => 'bg-white text-gray-300 border border-dashed border-gray-300',
                                     default => 'bg-gray-200 text-gray-500',
                                 };
                                 $label = match ($state) {
@@ -141,14 +168,16 @@
                                     'current' => 'text-accent-700 font-semibold',
                                     'rejected' => 'text-red-600 font-medium',
                                     'returned' => 'text-amber-700 font-semibold',
+                                    'skipped' => 'text-gray-300 line-through',
                                     default => 'text-gray-400',
                                 };
                             @endphp
                                 <div class="flex items-center gap-1.5 {{ $column->count() > 1 ? '' : 'flex-col' }}">
-                                    <div class="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-xs font-bold {{ $pill }}" title="{{ $state === 'returned' ? 'With the task owner for revision' : '' }}">
-                                        {{ $state === 'done' ? '✓' : $stage->sequence_no }}
+                                    <div class="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-xs font-bold {{ $pill }}" title="{{ $state === 'returned' ? 'Back with the Brand Manager' : ($state === 'skipped' ? 'Skipped - no stakeholder selected' : '') }}">
+                                        {{ $state === 'done' ? '✓' : ($state === 'skipped' ? '–' : $stage->sequence_no) }}
                                     </div>
                                     <span class="text-[11px] whitespace-nowrap {{ $label }}">{{ $stage->name }}</span>
+                                    @if ($state === 'skipped')<span class="text-[9px] uppercase tracking-wide text-gray-400">skipped</span>@endif
                                 </div>
                             @endforeach
                             </div>
@@ -165,16 +194,39 @@
                 <div class="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900">
                     <strong>Placeholder</strong> — waiting for the artwork.
                     @if ($openWorkTask)
-                        With the Design Team{{ $openWorkTask->assignee ? ' (' . $openWorkTask->assignee->name . ')' : ', not yet assigned to a designer' }}{{ $openWorkTask->due_at ? ', due ' . $openWorkTask->due_at->format('d M Y, H:i') : '' }}.
+                        With the {{ $openWorkTask->teamLabel() }}{{ $openWorkTask->assignee ? ' (' . $openWorkTask->assignee->name . ')' : ', not yet assigned' }}{{ $openWorkTask->due_at ? ', due ' . $openWorkTask->due_at->format('d M Y, H:i') : '' }}.
+                    @else
+                        {{ $document->owner?->name }} (Brand Manager) uploads the Word draft for Content Manager alignment, or assigns the creative to the Content Agency / Design Team.
+                    @endif
+                </div>
+            @elseif ($isDraftAligned)
+                <div class="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900">
+                    <strong>Draft aligned{{ $lastDecision ? ' by ' . $lastDecision->actor?->name . ' ' . $lastDecision->acted_at?->diffForHumans() : '' }}.</strong>
+                    @if ($openWorkTask)
+                        The creative is with the {{ $openWorkTask->teamLabel() }}{{ $openWorkTask->assignee ? ' (' . $openWorkTask->assignee->name . ')' : '' }}; it comes back to {{ $document->owner?->name }} (Brand Manager) to confirm.
+                    @else
+                        Waiting on {{ $document->owner?->name }} (Brand Manager) to assign the creative and start the review{{ $instance?->resumeAtStage ? ' at "' . $instance->resumeAtStage->name . '"' : '' }}.
                     @endif
                 </div>
             @elseif ($isParked)
                 <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                    <strong>Waiting on {{ $openWorkTask ? 'the Design Team' . ($openWorkTask->assignee ? ' (' . $openWorkTask->assignee->name . ')' : '') : $document->owner?->name . ' (task owner)' }}</strong>
+                    <strong>Waiting on {{ $openWorkTask ? 'the ' . $openWorkTask->teamLabel() . ($openWorkTask->assignee ? ' (' . $openWorkTask->assignee->name . ')' : '') : $document->owner?->name . ' (Brand Manager)' }}</strong>
                     to upload the revision{{ $lastDecision ? ' — ' . $lastDecision->decisionLabel() . ' by ' . $lastDecision->actor?->name . ' at ' . $lastDecision->stage?->name . ', ' . $lastDecision->acted_at?->diffForHumans() : '' }}.
-                    @if ($lastDecision?->decision === 'approved_with_changes' && ($document->workflowTemplate?->awc_resume ?? 'next_stage') === 'next_stage')
-                        Once it's uploaded it moves straight on to the next stage.
+                    @if ($lastDecision?->decision === 'not_approved')
+                        Once resubmitted it goes straight back to {{ $lastDecision->stage?->name }}.
+                    @elseif ($lastDecision?->decision === 'approved_with_changes' && ! $lastDecision->stage?->isDraft() && ($document->workflowTemplate?->awc_resume ?? 'next_stage') === 'next_stage')
+                        Once it's uploaded the workflow completes.
                     @endif
+                </div>
+            @endif
+
+            @if ($commentsLocked)
+                <div class="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+                    🔒 You've submitted your review, so this job is locked for you while it is with other stakeholders — you can view it but not add or edit comments.
+                </div>
+            @elseif ($commentsAreDraft)
+                <div class="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+                    ✎ Your comments are <strong>drafts</strong> — only you can see them until you submit your review.
                 </div>
             @endif
 
@@ -564,50 +616,60 @@
                 <!-- Right: actions, workflow status, activity, AI tools, metadata -->
                 <div class="space-y-6">
 
-                    @if ($isPendingApprover && ! $user->canRecordDecisions())
+                    @if ($isPendingApprover && (! $user->canRecordDecisions() || $isOwner))
                         <div class="bg-white rounded-xl border border-gray-200 p-6 text-sm text-gray-600">
-                            You're listed at <strong>{{ $myAssignment->stage->name }}</strong>, but Brand Managers can start, upload and assign tasks — not approve or reject them.
+                            You're listed at <strong>{{ $myAssignment->stage->name }}</strong>, but makers can't be checkers — Brand Managers start, upload and assign tasks rather than approving or rejecting them.
                             @if ($canManageTasks) Use <em>Reassign</em> under Workflow Status to hand it to the right stakeholder. @endif
                         </div>
                     @elseif ($isPendingApprover)
                         <div class="bg-white rounded-xl border-2 border-brand-200 p-6 shadow-sm shadow-brand-100/50">
                             <div class="flex items-center gap-2 mb-1">
                                 <span class="w-2 h-2 rounded-full bg-accent-500 animate-pulse"></span>
-                                <h3 class="text-base font-semibold text-gray-900">{{ $myStageIsDraft ? 'Your Draft' : 'Your Decision Needed' }}</h3>
+                                <h3 class="text-base font-semibold text-gray-900">{{ $myStageIsOffline ? 'Record the offline sign-off' : ($myStageIsDraft ? 'Align the draft' : 'Your Decision Needed') }}</h3>
                             </div>
                             <p class="text-xs text-gray-500 mb-3">
                                 {{ $myAssignment->stage->name }}
                                 @if ($myAssignment->dueAt())
                                     · <span class="{{ $myAssignment->isOverdue() ? 'text-red-600 font-medium' : ($myAssignment->isDueSoon() ? 'text-amber-600 font-medium' : '') }}">due {{ $myAssignment->dueAt()->format('d M Y, H:i') }}</span>
                                 @endif
-                                @if ($myStageIsDraft && $canUploadVersion) · upload your draft under Versions, then submit it on. @endif
+                                @if ($myStageIsDraft) · check the Brand Manager's draft; send it back with changes until it's aligned. @endif
                             </p>
-                            <form method="POST" action="{{ route('approvals.act', $instance) }}" class="space-y-3" x-data="{ decision: null }">
+                            @if ($myStageIsOffline)
+                                <p class="text-xs text-gray-600 bg-gray-50 rounded-md p-2 mb-3">The Chairperson reviews this offline. Upload the copy you received back from the Chairperson and record their outcome — approving it closes the workflow as <strong>Approved for Production</strong>.</p>
+                            @endif
+                            <form method="POST" action="{{ route('approvals.act', $instance) }}" class="space-y-3" x-data="{ decision: null }" enctype="multipart/form-data">
                                 @csrf
                                 <div class="grid gap-2 text-sm">
                                     <label class="flex items-center gap-2.5 border border-gray-200 rounded-lg px-3 py-2.5 cursor-pointer transition has-[:checked]:border-emerald-400 has-[:checked]:bg-emerald-50 has-[:checked]:ring-1 has-[:checked]:ring-emerald-300 hover:border-gray-300">
                                         <input type="radio" name="decision" value="approved" required class="text-emerald-600 focus:ring-emerald-500">
                                         <span>
-                                            <span class="font-medium text-gray-800">{{ $myStageIsDraft ? 'Submit to next stage' : 'Approved' }}</span>
-                                            <span class="block text-xs text-gray-400">{{ $myStageIsDraft ? 'Draft is ready — move it on' : 'Clean approve, no changes needed' }}</span>
+                                            <span class="font-medium text-gray-800">{{ $myStageIsDraft ? 'Draft aligned' : ($myStageIsOffline ? 'Approved by the Chairperson' : 'Approved') }}</span>
+                                            <span class="block text-xs text-gray-400">{{ $myStageIsDraft ? 'Back to the Brand Manager to commission the creative' : ($myStageIsFinal ? 'Closes the workflow' : 'Moves on to the next stage') }}</span>
                                         </span>
                                     </label>
                                     <label class="flex items-center gap-2.5 border border-gray-200 rounded-lg px-3 py-2.5 cursor-pointer transition has-[:checked]:border-amber-400 has-[:checked]:bg-amber-50 has-[:checked]:ring-1 has-[:checked]:ring-amber-300 hover:border-gray-300">
                                         <input type="radio" name="decision" value="approved_with_changes" class="text-amber-600 focus:ring-amber-500">
                                         <span>
                                             <span class="font-medium text-gray-800">{{ $myStageIsDraft ? 'Needs changes' : 'Approved with Changes' }}</span>
-                                            <span class="block text-xs text-gray-400">{{ $myStageIsDraft ? 'Back to the task owner to fix, then on to the next stage' : 'Approved — task owner fixes it, then it moves to the next stage' }}</span>
+                                            <span class="block text-xs text-gray-400">{{ $myStageIsDraft ? 'Back to the Brand Manager to revise, then back to you' : ($myStageIsFinal ? 'Back to the Brand Manager to make the changes, then it closes' : 'Moves on to the next stage; the Brand Manager sees your changes') }}</span>
                                         </span>
                                     </label>
                                     <label class="flex items-center gap-2.5 border border-gray-200 rounded-lg px-3 py-2.5 cursor-pointer transition has-[:checked]:border-red-400 has-[:checked]:bg-red-50 has-[:checked]:ring-1 has-[:checked]:ring-red-300 hover:border-gray-300">
                                         <input type="radio" name="decision" value="not_approved" class="text-red-600 focus:ring-red-500">
                                         <span>
                                             <span class="font-medium text-gray-800">Not Approved</span>
-                                            <span class="block text-xs text-gray-400">Rejected — sends back to owner</span>
+                                            <span class="block text-xs text-gray-400">Back to the Brand Manager to revise — returns to {{ $myStageIsOffline ? 'this stage' : 'you' }} once resubmitted</span>
                                         </span>
                                     </label>
                                 </div>
                                 <textarea name="comments" rows="3" placeholder="Comments (required unless a clean Approve)" class="block w-full text-sm border-gray-300 rounded-lg"></textarea>
+                                @if ($myStageIsOffline)
+                                    <div>
+                                        <label class="text-xs font-medium text-gray-700">Copy received from the Chairperson</label>
+                                        <x-file-dropzone name="signed_copy" hint="Required for an approval — the signed or commented file." />
+                                        <x-input-error :messages="$errors->get('signed_copy')" class="mt-1" />
+                                    </div>
+                                @endif
 
                                 <x-input-error :messages="$errors->get('approval')" class="mt-1" />
                                 @if ($requirePassword)
@@ -624,7 +686,7 @@
                                 @endif
 
                                 <button type="submit" class="w-full inline-flex items-center justify-center px-4 py-2.5 bg-brand-600 border border-transparent rounded-lg font-semibold text-sm text-white hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 transition">
-                                    {{ $myStageIsDraft ? 'Submit' : 'Record Decision' }}
+                                    {{ $myStageIsDraft ? 'Submit' : ($myStageIsOffline ? 'Upload & record sign-off' : 'Submit review') }}
                                 </button>
                             </form>
                         </div>
@@ -632,75 +694,118 @@
 
                     @if ($isOwner && $document->status === 'draft')
                         <div class="bg-white rounded-xl border-2 border-brand-200 p-6">
-                            <h3 class="text-base font-semibold text-gray-900 mb-1">Submit for Review</h3>
-                            <p class="text-xs text-gray-400 mb-3">This document is still a draft — submit it to kick off the approval workflow.</p>
-                            <form method="POST" action="{{ route('documents.submit', $document) }}">
-                                @csrf
-                                <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">Submit for Review</x-primary-button>
-                            </form>
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">{{ $firstStageIsDraft ? 'Send for draft alignment' : 'Assign to stakeholders' }}</h3>
+                            <p class="text-xs text-gray-400 mb-3">
+                                @if (! $document->currentVersion)
+                                    Upload the Word draft under Versions first, or assign the creative to the Content Agency / Design Team below.
+                                @elseif ($firstStageIsDraft)
+                                    Sends the draft to the Content Manager. It goes back and forth with you until it's aligned, then comes back to you to commission the creative.
+                                @else
+                                    Starts the workflow with the stakeholders you picked.
+                                @endif
+                            </p>
+                            @if ($document->currentVersion)
+                                <form method="POST" action="{{ route('documents.submit', $document) }}">
+                                    @csrf
+                                    <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">{{ $firstStageIsDraft ? 'Send to Content Manager' : 'Start workflow' }}</x-primary-button>
+                                </form>
+                            @endif
                         </div>
                     @endif
 
-                    @if (($isOwner || $canManageTasks) && $isParked)
-                        <div id="revise" class="bg-white rounded-xl border-2 border-amber-200 p-6" x-data="{ mode: '{{ $openWorkTask ? 'design' : 'upload' }}' }">
-                            <h3 class="text-base font-semibold text-gray-900 mb-1">Revise &amp; Resubmit</h3>
+                    @if (($isOwner || $canManageTasks) && $isBackWithOwner)
+                        <div id="revise" class="bg-white rounded-xl border-2 {{ $isDraftAligned ? 'border-violet-200' : 'border-amber-200' }} p-6" x-data="{ mode: 'upload' }">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">{{ $isDraftAligned ? 'Draft aligned — commission the creative' : 'Revise & Resubmit' }}</h3>
                             @if ($lastDecision?->comments)
                                 <p class="text-xs text-gray-600 bg-amber-50 rounded-md p-2 mb-3"><strong>{{ $lastDecision->actor?->name }}:</strong> {{ $lastDecision->comments }}</p>
                             @endif
 
                             @if ($openWorkTask)
                                 <div class="text-sm text-gray-700 space-y-2">
-                                    <p>With the Design Team{{ $openWorkTask->assignee ? ' — ' . $openWorkTask->assignee->name : ' (not yet assigned)' }}{{ $openWorkTask->due_at ? ', due ' . $openWorkTask->due_at->format('d M, H:i') : '' }}.</p>
-                                    <p class="text-xs text-gray-500">{{ $openWorkTask->resubmit_on_upload ? 'Their upload goes straight back into review.' : 'You\'ll be notified to resubmit when their upload is in.' }}</p>
-                                    <form method="POST" action="{{ route('work-tasks.destroy', $openWorkTask) }}" onsubmit="return confirm('Withdraw this from the Design Team?')">
+                                    <p>With the {{ $openWorkTask->teamLabel() }}{{ $openWorkTask->assignee ? ' — ' . $openWorkTask->assignee->name : ' (not yet assigned)' }}{{ $openWorkTask->due_at ? ', due ' . $openWorkTask->due_at->format('d M, H:i') : '' }}.</p>
+                                    <p class="text-xs text-gray-500">{{ $openWorkTask->resubmit_on_upload ? 'Their upload goes straight back into review.' : 'Their upload comes back to you to confirm before it goes for review.' }}</p>
+                                    <form method="POST" action="{{ route('work-tasks.destroy', $openWorkTask) }}" onsubmit="return confirm('Withdraw this from the {{ $openWorkTask->teamLabel() }}?')">
                                         @csrf @method('DELETE')
-                                        <button class="text-xs text-red-600 hover:underline">Withdraw from Design Team</button>
+                                        <button class="text-xs text-red-600 hover:underline">Withdraw from the {{ $openWorkTask->teamLabel() }}</button>
                                     </form>
                                 </div>
                             @else
-                                <div class="flex gap-1 mb-3 text-xs">
-                                    <button type="button" @click="mode = 'upload'" :class="mode === 'upload' ? 'bg-amber-100 text-amber-800' : 'text-gray-500 hover:bg-gray-50'" class="px-2.5 py-1 rounded-md font-medium">Upload it myself</button>
-                                    <button type="button" @click="mode = 'design'" :class="mode === 'design' ? 'bg-amber-100 text-amber-800' : 'text-gray-500 hover:bg-gray-50'" class="px-2.5 py-1 rounded-md font-medium">Send to Design Team</button>
+                                @if ($uploadToConfirm)
+                                    <div class="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-md p-2 mb-3">
+                                        <strong>v{{ $uploadToConfirm->version_no }}</strong> uploaded by {{ $uploadToConfirm->uploader?->name }} {{ $uploadToConfirm->created_at?->diffForHumans() }} — check it under Versions, then {{ $isDraftAligned ? 'start the review' : 'resubmit' }} below.
+                                    </div>
+                                @endif
+                                <div class="flex flex-wrap gap-1 mb-3 text-xs">
+                                    <button type="button" @click="mode = 'upload'" :class="mode === 'upload' ? 'bg-amber-100 text-amber-800' : 'text-gray-500 hover:bg-gray-50'" class="px-2.5 py-1 rounded-md font-medium">{{ $isDraftAligned ? 'Start review' : 'Upload it myself' }}</button>
+                                    <button type="button" @click="mode = 'agency'" :class="mode === 'agency' ? 'bg-amber-100 text-amber-800' : 'text-gray-500 hover:bg-gray-50'" class="px-2.5 py-1 rounded-md font-medium">Content Agency</button>
+                                    <button type="button" @click="mode = 'design'" :class="mode === 'design' ? 'bg-amber-100 text-amber-800' : 'text-gray-500 hover:bg-gray-50'" class="px-2.5 py-1 rounded-md font-medium">Internal Design Team</button>
                                 </div>
                                 <form x-show="mode === 'upload'" method="POST" action="{{ route('documents.submit', $document) }}" enctype="multipart/form-data" class="space-y-3">
                                     @csrf
                                     <x-file-dropzone name="file" />
-                                    <input type="text" name="change_notes" placeholder="What changed?" class="block w-full text-sm border-gray-300 rounded-lg">
-                                    <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">Upload Revision &amp; Resubmit</x-primary-button>
-                                    <p class="text-[11px] text-gray-400">Already uploaded the revision under Versions? Leave the file empty and resubmit.</p>
+                                    <input type="text" name="change_notes" placeholder="{{ $isDraftAligned ? 'Notes (optional)' : 'What changed?' }}" class="block w-full text-sm border-gray-300 rounded-lg">
+                                    <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">{{ $isDraftAligned ? 'Start review' . ($instance?->resumeAtStage ? ' — ' . $instance->resumeAtStage->name : '') : 'Resubmit to ' . ($lastDecision?->stage?->name ?? 'review') }}</x-primary-button>
+                                    <p class="text-[11px] text-gray-400">{{ $isDraftAligned ? 'Attach the creative here, or leave it empty to send the current version on.' : 'Already uploaded the revision under Versions? Leave the file empty and resubmit.' }}</p>
                                 </form>
-                                <form x-show="mode === 'design'" x-cloak method="POST" action="{{ route('documents.work-tasks.store', $document) }}" class="space-y-3">
-                                    @csrf
-                                    <textarea name="instructions" rows="3" class="block w-full text-sm border-gray-300 rounded-lg" placeholder="What should the designers change?">{{ $lastDecision?->comments }}</textarea>
-                                    <div class="grid grid-cols-2 gap-2">
-                                        <div>
-                                            <label class="text-xs text-gray-500">Due date</label>
-                                            <input type="date" name="due_date" min="{{ now()->toDateString() }}" value="{{ now()->addHours(config('promomats.due_dates.default_stage_hours', 48))->toDateString() }}" class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
+                                @foreach (['agency' => 'Content Agency', 'design' => 'Internal Design Team'] as $team => $teamName)
+                                    <form x-show="mode === '{{ $team }}'" x-cloak method="POST" action="{{ route('documents.work-tasks.store', $document) }}" class="space-y-3">
+                                        @csrf
+                                        <input type="hidden" name="team" value="{{ $team }}">
+                                        <textarea name="instructions" rows="3" class="block w-full text-sm border-gray-300 rounded-lg" placeholder="{{ $isDraftAligned ? 'Brief for the creative (the aligned draft is attached as the current version)' : 'What should be changed?' }}">{{ $isDraftAligned ? '' : $lastDecision?->comments }}</textarea>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label class="text-xs text-gray-500">Due date</label>
+                                                <input type="date" name="due_date" min="{{ now()->toDateString() }}" value="{{ now()->addHours(config('promomats.due_dates.default_stage_hours', 48))->toDateString() }}" class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
+                                            </div>
+                                            <div>
+                                                <label class="text-xs text-gray-500">Person (optional)</label>
+                                                <select name="assign_to" class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
+                                                    <option value="">Whole {{ $teamName }}</option>
+                                                    @foreach ($teamMembers[$team] as $member)
+                                                        <option value="{{ $member->id }}">{{ $member->name }}</option>
+                                                    @endforeach
+                                                </select>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <label class="text-xs text-gray-500">Designer (optional)</label>
-                                            <select name="assign_to" class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
-                                                <option value="">Whole Design Team</option>
-                                                @foreach ($designTeam as $designer)
-                                                    <option value="{{ $designer->id }}">{{ $designer->name }}</option>
-                                                @endforeach
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <label class="flex items-center gap-2 text-xs text-gray-600">
-                                        <input type="hidden" name="resubmit_on_upload" value="0">
-                                        <input type="checkbox" name="resubmit_on_upload" value="1" checked class="rounded border-gray-300 text-brand-600">
-                                        Send it back into review as soon as the Design Team uploads it
-                                    </label>
-                                    <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">Send to Design Team</x-primary-button>
-                                </form>
+                                        @if ($team === 'design' && $isParked)
+                                            <label class="flex items-center gap-2 text-xs text-gray-600">
+                                                <input type="hidden" name="resubmit_on_upload" value="0">
+                                                <input type="checkbox" name="resubmit_on_upload" value="1" class="rounded border-gray-300 text-brand-600">
+                                                Skip my confirmation — send it back into review as soon as it's uploaded
+                                            </label>
+                                        @else
+                                            <p class="text-[11px] text-gray-400">Their upload comes back to you to confirm before it goes for review.</p>
+                                        @endif
+                                        @if ($teamMembers[$team]->isEmpty())
+                                            <p class="text-[11px] text-amber-700">No one has the {{ $teamName }} role yet — ask an admin to assign it.</p>
+                                        @endif
+                                        <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">Send to {{ $teamName }}</x-primary-button>
+                                    </form>
+                                @endforeach
                             @endif
                         </div>
                     @endif
 
-                    @if ($openWorkTask && ($user->isDesignTeam() || $openWorkTask->assigned_to === $user->id) && ! $canManageTasks)
+                    {{-- Placeholder with no file yet: the Brand Manager may hand the brief straight to a team. --}}
+                    @if (($isOwner || $canManageTasks) && $document->status === 'draft' && $document->is_placeholder && ! $openWorkTask)
+                        <div class="bg-white rounded-xl border-2 border-violet-200 p-6" x-data="{ team: 'agency' }">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">Assign the creative</h3>
+                            <p class="text-xs text-gray-400 mb-3">Skip draft alignment and send the brief straight to a team. Their upload comes back to you.</p>
+                            <form method="POST" action="{{ route('documents.placeholder.assign', $document) }}" class="space-y-3">
+                                @csrf
+                                <select name="team" x-model="team" class="block w-full text-sm border-gray-300 rounded-lg">
+                                    <option value="agency">Content Agency</option>
+                                    <option value="design">Internal Design Team</option>
+                                </select>
+                                <textarea name="instructions" rows="3" class="block w-full text-sm border-gray-300 rounded-lg" placeholder="Brief">{{ $document->description }}</textarea>
+                                <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">Send brief</x-primary-button>
+                            </form>
+                        </div>
+                    @endif
+
+                    @if ($openWorkTask && ($user->inTeam($openWorkTask->team) || $openWorkTask->assigned_to === $user->id) && ! $canManageTasks)
                         <div class="bg-white rounded-xl border-2 border-violet-200 p-6">
-                            <h3 class="text-base font-semibold text-gray-900 mb-1">Design work: {{ $openWorkTask->typeLabel() }}</h3>
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">{{ $openWorkTask->teamLabel() }}: {{ $openWorkTask->typeLabel() }}</h3>
                             <p class="text-xs text-gray-500 mb-2">From {{ $openWorkTask->requester?->name }}{{ $openWorkTask->due_at ? ' · due ' . $openWorkTask->due_at->format('d M, H:i') : '' }} · {{ $openWorkTask->assignee ? 'assigned to ' . $openWorkTask->assignee->name : 'unassigned' }}</p>
                             @if ($openWorkTask->instructions)
                                 <p class="text-sm text-gray-700 whitespace-pre-line mb-3">{{ $openWorkTask->instructions }}</p>
@@ -768,8 +873,8 @@
                                     </ul>
                                 </div>
                             @empty
-                                @if ($isParked)
-                                    <p class="text-sm text-amber-700">With {{ $openWorkTask ? 'the Design Team' : $document->owner?->name . ' (task owner)' }} for revision.</p>
+                                @if ($isBackWithOwner)
+                                    <p class="text-sm text-amber-700">With {{ $openWorkTask ? 'the ' . $openWorkTask->teamLabel() : $document->owner?->name . ' (Brand Manager)' }} {{ $isDraftAligned ? '— draft aligned, creative next' : 'for revision' }}.</p>
                                 @else
                                     <p class="text-sm text-gray-400">No stage currently open.</p>
                                 @endif
@@ -840,20 +945,26 @@
                         </div>
 
                         <div x-show="tab === 'comments'" class="p-6 max-h-[32rem] overflow-y-auto" id="comments">
-                            <form method="POST" action="{{ route('documents.comments.store', $document) }}" class="mb-5 space-y-2">
-                                @csrf
-                                <textarea name="body" rows="2" required placeholder="Add a comment…" class="block w-full text-sm border-gray-300 rounded-lg">{{ old('body') }}</textarea>
-                                <x-primary-button>Post Comment</x-primary-button>
-                            </form>
+                            @if ($commentsLocked)
+                                <p class="mb-5 text-xs text-gray-500">🔒 Commenting is locked — you've submitted your review.</p>
+                            @else
+                                <form method="POST" action="{{ route('documents.comments.store', $document) }}" class="mb-5 space-y-2">
+                                    @csrf
+                                    <textarea name="body" rows="2" required placeholder="{{ $commentsAreDraft ? 'Add a draft comment (visible to others once you submit your review)…' : 'Add a comment…' }}" class="block w-full text-sm border-gray-300 rounded-lg">{{ old('body') }}</textarea>
+                                    <x-primary-button>{{ $commentsAreDraft ? 'Save draft comment' : 'Post Comment' }}</x-primary-button>
+                                </form>
+                            @endif
 
                             @forelse ($document->comments as $comment)
                                 <div class="py-3 border-t border-gray-100 text-sm" id="comment-{{ $comment->id }}">
                                     <div class="flex items-center justify-between gap-2">
-                                        <span class="font-medium text-gray-900 flex items-center gap-1.5"><x-avatar :name="$comment->author?->name" size="xs" />{{ $comment->author?->name }}</span>
+                                        <span class="font-medium text-gray-900 flex items-center gap-1.5"><x-avatar :name="$comment->author?->name" size="xs" />{{ $comment->author?->name }} @if ($comment->isDraft())<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700 font-medium">draft — only you</span> @endif</span>
                                         <span class="text-gray-400 text-xs shrink-0">{{ $comment->created_at->diffForHumans() }}</span>
                                     </div>
                                     <p class="mt-1.5 text-gray-700 whitespace-pre-line">{{ $comment->body }}</p>
-                                    <button type="button" onclick="document.getElementById('reply-form-{{ $comment->id }}').classList.toggle('hidden')" class="mt-1 text-xs text-brand-600 hover:underline">Reply</button>
+                                    @unless ($commentsLocked)
+                                        <button type="button" onclick="document.getElementById('reply-form-{{ $comment->id }}').classList.toggle('hidden')" class="mt-1 text-xs text-brand-600 hover:underline">Reply</button>
+                                    @endunless
 
                                     <form id="reply-form-{{ $comment->id }}" method="POST" action="{{ route('documents.comments.store', $document) }}" class="hidden mt-2 ml-4 space-y-2">
                                         @csrf
@@ -865,7 +976,7 @@
                                     @foreach ($comment->replies as $reply)
                                         <div class="mt-3 ml-4 pl-3 border-l-2 border-gray-200">
                                             <div class="flex items-center justify-between gap-2">
-                                                <span class="font-medium text-gray-900 flex items-center gap-1.5"><x-avatar :name="$reply->author?->name" size="xs" />{{ $reply->author?->name }}</span>
+                                                <span class="font-medium text-gray-900 flex items-center gap-1.5"><x-avatar :name="$reply->author?->name" size="xs" />{{ $reply->author?->name }} @if ($reply->isDraft())<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700 font-medium">draft — only you</span> @endif</span>
                                                 <span class="text-gray-400 text-xs shrink-0">{{ $reply->created_at->diffForHumans() }}</span>
                                             </div>
                                             <p class="mt-1 text-gray-700 whitespace-pre-line">{{ $reply->body }}</p>
@@ -1161,7 +1272,7 @@
                                     <x-primary-button>Confirm Distributed</x-primary-button>
                                 </form>
                             @else
-                                <p class="text-sm text-gray-500">Approved for distribution — awaiting confirmation from the document owner.</p>
+                                <p class="text-sm text-gray-500">Approved for distribution — awaiting confirmation from the Brand Manager.</p>
                             @endif
                         </div>
                     @elseif ($document->distributionRecords->firstWhere('status', 'distributed'))
@@ -1183,7 +1294,7 @@
                                 <p class="text-xs text-[#8f2323]">⚖️ Locked while under legal hold — release the hold to change lifecycle status.</p>
                             @else
                                 <div class="flex flex-wrap gap-2">
-                                    @foreach (['approved_for_production' => 'Mark Approved for Production', 'superseded' => 'Mark Superseded', 'obsolete' => 'Mark Obsolete', 'archived' => 'Archive'] as $targetStatus => $buttonLabel)
+                                    @foreach ($lifecycleActions as $targetStatus => $buttonLabel)
                                         @if ($document->status !== $targetStatus)
                                             <form method="POST" action="{{ route('documents.status.update', $document) }}">
                                                 @csrf

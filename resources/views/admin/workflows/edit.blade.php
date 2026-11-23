@@ -42,14 +42,20 @@
                     <label class="flex items-start gap-3 text-sm">
                         <input type="checkbox" name="owner_can_customize_workflow" value="1" @checked($workflow->owner_can_customize_workflow) class="mt-0.5 rounded border-gray-300 text-brand-600">
                         <span>
-                            <span class="font-medium text-gray-800">Let the task owner pick stakeholders at upload</span>
+                            <span class="font-medium text-gray-800">Let the Brand Manager pick stakeholders at upload</span>
                             <span class="block text-xs text-gray-500 mt-0.5">On the upload form the owner picks the person for each stage (e.g. Jalba or Rathna), can add someone outside the stage's usual people, and sets each stage's due time (48h default).</span>
                         </span>
                     </label>
                     <div class="mt-4 text-sm">
-                        <p class="font-medium text-gray-800">After "Approved with changes" and the revision is uploaded</p>
+                        <p class="font-medium text-gray-800">After "Approved with changes" at the final stage and the revision is uploaded</p>
+                        <p class="text-xs text-gray-500">At every other stage, Approved with changes moves straight on to the next stage.</p>
                         <label class="flex items-center gap-2 mt-1 text-gray-600"><input type="radio" name="awc_resume" value="next_stage" @checked(($workflow->awc_resume ?? 'next_stage') === 'next_stage') class="text-brand-600"> Move on to the next stage (the stage already approved it)</label>
                         <label class="flex items-center gap-2 mt-1 text-gray-600"><input type="radio" name="awc_resume" value="same_stage" @checked($workflow->awc_resume === 'same_stage') class="text-brand-600"> Send it back to the same stage for another look</label>
+                    </div>
+                    <div class="mt-4 text-sm">
+                        <p class="font-medium text-gray-800">When the workflow finishes, mark the job</p>
+                        <label class="flex items-center gap-2 mt-1 text-gray-600"><input type="radio" name="completion_status" value="approved_for_distribution" @checked(($workflow->completion_status ?? 'approved_for_distribution') === 'approved_for_distribution') class="text-brand-600"> Approved for Distribution</label>
+                        <label class="flex items-center gap-2 mt-1 text-gray-600"><input type="radio" name="completion_status" value="approved_for_production" @checked($workflow->completion_status === 'approved_for_production') class="text-brand-600"> Approved for Production (after the Chairperson; released for distribution later)</label>
                     </div>
                     <button class="mt-3 text-xs px-3 py-1.5 bg-brand-600 text-white rounded-md hover:bg-brand-700">Save settings</button>
                 </form>
@@ -161,7 +167,8 @@
                                 <x-input-label for="stage_type" value="Stage type" />
                                 <select id="stage_type" name="stage_type" class="mt-1 block w-full border-gray-300 rounded-md">
                                     <option value="review">Review / approval</option>
-                                    <option value="draft">Draft (work step — submitted on, not approved)</option>
+                                    <option value="draft">Draft alignment (to and fro with the Brand Manager; once aligned it goes back to them)</option>
+                                    <option value="offline">Offline sign-off (e.g. Chairperson — the assignee uploads the signed copy)</option>
                                 </select>
                             </div>
                         </div>

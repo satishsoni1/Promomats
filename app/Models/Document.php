@@ -58,6 +58,7 @@ class Document extends Model
         'draft' => 'Draft',
         'in_review' => 'In Review',
         'approved_with_changes_pending' => 'Revise & Resubmit',
+        'draft_aligned' => 'Draft Aligned',
         'rejected' => 'Rejected',
         'approved' => 'Approved',
         'approved_for_production' => 'Approved for Production',
@@ -74,6 +75,11 @@ class Document extends Model
     public const LIBRARY_STATUSES = ['approved', 'approved_for_production', 'approved_for_distribution'];
 
     public const CHANNEL_LABELS = ['print' => 'Print', 'digital' => 'Digital'];
+
+    // Back with the Brand Manager (job owner) for their next move: upload a revision
+    // after "Not approved", or - once the Content Manager has aligned the draft -
+    // commission the creative and trigger the review.
+    public const OWNER_ACTION_STATUSES = ['approved_with_changes_pending', 'draft_aligned'];
 
     public function owner()
     {
@@ -121,8 +127,10 @@ class Document extends Model
                     $q->selectRaw(1)->from('document_work_tasks as wt')->whereColumn('wt.document_id', 'documents.id')
                         ->where(function ($m) use ($user, $uid) {
                             $m->where('wt.assigned_to', $uid);
-                            if ($user->isDesignTeam()) {
-                                $m->orWhere('wt.team', 'design');
+                            foreach (['design', 'agency'] as $team) {
+                                if ($user->inTeam($team)) {
+                                    $m->orWhere('wt.team', $team);
+                                }
                             }
                         });
                 });
@@ -245,6 +253,38 @@ class Document extends Model
     public function activeWorkflowInstance()
     {
         return $this->hasOne(DocumentWorkflowInstance::class)->where('status', 'running')->latestOfMany();
+    }
+
+    /**
+     * Whether $user's new comments start as a private draft: they hold a pending
+     * review task on this job right now. Their drafts are published when they
+     * submit their review (or the stage moves on without them).
+     */
+    public function commentsStartAsDraftFor(User $user): bool
+    {
+        if ($user->id === $this->owner_id) {
+            return false;
+        }
+
+        return (bool) $this->activeWorkflowInstance?->pendingAssignees()->where('user_id', $user->id)->exists();
+    }
+
+    /**
+     * A reviewer who has submitted their review is locked out of commenting (and
+     * editing their comments) while the job is with another stakeholder. It
+     * unlocks if the job comes back to them with a new task.
+     */
+    public function commentsLockedFor(User $user): bool
+    {
+        $instance = $this->activeWorkflowInstance;
+
+        if (! $instance || $user->id === $this->owner_id) {
+            return false;
+        }
+
+        $tasks = $instance->assignees()->where('user_id', $user->id)->pluck('status');
+
+        return $tasks->isNotEmpty() && ! $tasks->contains('pending');
     }
 
     public function approvalActions()

@@ -63,7 +63,7 @@
                         <label class="flex items-start gap-3 text-sm">
                             <input type="checkbox" name="owner_can_customize_workflow" value="1" @checked(old('owner_can_customize_workflow')) class="mt-0.5 rounded border-gray-300 text-brand-600 focus:ring-brand-500">
                             <span>
-                                <span class="font-medium text-gray-800">Let the document owner pick approvers at upload</span>
+                                <span class="font-medium text-gray-800">Let the Brand Manager pick approvers at upload</span>
                                 <span class="block text-xs text-gray-500 mt-0.5">The owner can narrow a stage's candidate people down to one named person on the upload form. Can be changed later on the edit screen.</span>
                             </span>
                         </label>

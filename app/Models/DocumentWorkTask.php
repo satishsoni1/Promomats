@@ -5,16 +5,24 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Work handed to a whole team rather than one person - e.g. "Design Team: produce
- * the artwork for this placeholder" or "Design Team: rework after Approved with
- * changes". Anyone in the team can pick it up or assign it to one designer
- * (config('promomats.roles.design_team')); uploading the file completes it.
+ * Work handed to a whole team rather than one person - the internal Design Team
+ * or the external Content Agency: "produce the creative from the aligned draft",
+ * "artwork for this placeholder", or "rework after Not approved". Anyone in the
+ * team can pick it up or assign it to one person; uploading the file completes
+ * it. The Brand Manager always confirms the upload before review (re)starts,
+ * except for Design Team rework the Brand Manager flagged to resubmit itself.
  */
 class DocumentWorkTask extends Model
 {
     public const TYPE_LABELS = [
         'artwork' => 'Artwork upload',
+        'creative' => 'Creative from the aligned draft',
         'rework' => 'Rework after review',
+    ];
+
+    public const TEAM_LABELS = [
+        'design' => 'Internal Design Team',
+        'agency' => 'Content Agency',
     ];
 
     protected $fillable = [
@@ -56,6 +64,11 @@ class DocumentWorkTask extends Model
     public function typeLabel(): string
     {
         return self::TYPE_LABELS[$this->type] ?? ucfirst($this->type);
+    }
+
+    public function teamLabel(): string
+    {
+        return self::TEAM_LABELS[$this->team] ?? ucfirst($this->team);
     }
 
     public function isOverdue(): bool

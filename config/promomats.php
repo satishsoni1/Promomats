@@ -8,16 +8,23 @@ return [
 
     'roles' => [
         // MLR reviewers: review, select text and comment - but never upload files.
-        'mlr' => ['medical', 'regulatory', 'legal', 'regulatory-level-1', 'regulatory-level-2', 'legal-level-1', 'legal-level-2'],
+        // R&D ('rd') is the Medical track of MLR - one stakeholder among the three.
+        'mlr' => ['medical', 'rd', 'regulatory', 'legal', 'regulatory-level-1', 'regulatory-level-2', 'legal-level-1', 'legal-level-2'],
 
         // The internal Design Team: work is assigned to the team as a whole
         // ("umbrella"), then picked up by / assigned to an individual designer.
         // Everyone here also counts as a Content Creator in workflows.
         'design_team' => ['design-team', 'design-internal', 'content-creator', 'content-creator-intext'],
 
-        // Brand Managers / task owners: start jobs, upload, assign stakeholders -
-        // never approve or reject (unless they also hold a reviewer role above).
-        'brand_manager' => ['brand-manager'],
+        // Brand Managers (= job owners; the old "Document Owner" role is the same
+        // thing): start jobs, upload, assign stakeholders - never approve or reject
+        // ("makers can't be checkers"), unless they also hold a reviewer role.
+        'brand_manager' => ['brand-manager', 'document-owner'],
+
+        // External Content Agency: produces the creative / revised file when the
+        // Brand Manager assigns it. Their upload always comes back to the Brand
+        // Manager to confirm before it goes (back) into review.
+        'agency' => ['content-agency', 'agency'],
     ],
 
     'approvals' => [

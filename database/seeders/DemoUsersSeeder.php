@@ -20,7 +20,7 @@ class DemoUsersSeeder extends Seeder
     public function run(): void
     {
         $demoUsers = [
-            ['email' => 'owner@promomats.test', 'name' => 'Olivia Owner', 'role' => 'Document Owner', 'dept' => 'Marketing'],
+            ['email' => 'owner@promomats.test', 'name' => 'Olivia Owner', 'role' => 'Brand Manager', 'dept' => 'Marketing'],
             ['email' => 'contentmanager@promomats.test', 'name' => 'Carl Contentmanager', 'role' => 'Content Manager', 'dept' => 'Content'],
             ['email' => 'tmagm@promomats.test', 'name' => 'Tara TmAgm', 'role' => 'TM/AGM Marketing', 'dept' => 'Marketing'],
             ['email' => 'reg1@promomats.test', 'name' => 'Raj Regulatory1', 'role' => 'Regulatory Level 1', 'dept' => 'Regulatory'],

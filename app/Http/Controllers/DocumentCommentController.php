@@ -42,7 +42,16 @@ class DocumentCommentController extends Controller
             'highlight_rects.*.h' => ['required', 'numeric', 'min:0', 'max:100'],
         ]);
 
+        $this->abortIfLocked($document, $request->user());
+
         $isAnchoredToPage = isset($validated['page_number']);
+        // A reviewer holding the job drafts privately until they submit their review.
+        $isDraft = $document->commentsStartAsDraftFor($request->user());
+
+        if (! empty($validated['parent_id'])) {
+            // Replies only to threads this person can see (not someone else's draft).
+            abort_unless(DocumentComment::whereKey($validated['parent_id'])->where('document_id', $document->id)->exists(), 422);
+        }
 
         $comment = DocumentComment::create([
             'document_id' => $document->id,
@@ -59,17 +68,21 @@ class DocumentCommentController extends Controller
             'selected_text' => $isAnchoredToPage ? ($validated['selected_text'] ?? null) : null,
             'replacement_text' => $isAnchoredToPage ? ($validated['replacement_text'] ?? null) : null,
             'highlight_rects' => $isAnchoredToPage ? ($validated['highlight_rects'] ?? null) : null,
+            'published_at' => $isDraft ? null : now(),
         ]);
 
-        $this->notifyThread($document, $comment, $request->user());
+        // Drafts stay private, so nobody is told about them until they're published.
+        if (! $isDraft) {
+            $this->notifyThread($document, $comment, $request->user());
+        }
 
         if ($request->wantsJson()) {
             return response()->json([
-                'comment' => $comment->load('author'),
+                'comment' => $comment->load('author')->toArray() + ['draft' => $isDraft],
             ]);
         }
 
-        return back()->with('status', 'Comment posted.')->withFragment('comment-' . $comment->id);
+        return back()->with('status', $isDraft ? 'Draft comment saved - others see it once you submit your review.' : 'Comment posted.')->withFragment('comment-' . $comment->id);
     }
 
     /**
@@ -81,6 +94,7 @@ class DocumentCommentController extends Controller
         $this->authorize('view', $document);
         abort_unless($comment->document_id === $document->id, 404);
         abort_unless($comment->user_id === $request->user()->id, 403, 'Only the author can edit a comment.');
+        $this->abortIfLocked($document, $request->user());
 
         $validated = $request->validate([
             'body' => ['required', 'string', 'max:5000'],
@@ -130,6 +144,19 @@ class DocumentCommentController extends Controller
         }
 
         return back()->with('status', $resolved ? 'Comment resolved.' : 'Comment reopened.');
+    }
+
+    /**
+     * Once a reviewer has submitted their review, the job is locked for them: no new
+     * comments or edits while it is with another stakeholder (UAT feedback).
+     */
+    protected function abortIfLocked(Document $document, User $user): void
+    {
+        abort_if(
+            $document->commentsLockedFor($user),
+            403,
+            'You have already submitted your review of this job, so commenting is locked while it is with other stakeholders.'
+        );
     }
 
     /**

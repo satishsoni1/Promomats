@@ -5,11 +5,13 @@ namespace Database\Seeders\Concerns;
 use App\Models\Role;
 use App\Models\WorkflowStage;
 use App\Models\WorkflowTemplate;
-use App\Models\WorkflowTransition;
 
 /**
  * Shared helper for building a template's stages + A/AwC/NA transition rules from a
- * flat stage list, used by all the Pharma/Himalaya workflow seeders.
+ * flat stage list, used by all the Pharma/Himalaya workflow seeders. Transitions
+ * follow App\Support\Workflow\TransitionWiring (Approved / Approved with changes
+ * move on; Not approved goes back to the Brand Manager and returns to the same
+ * stage). The revision models below are historical - they are no longer wired.
  *
  * Two revision models are supported, chosen per template via $reviseWithOwner:
  *
@@ -47,9 +49,7 @@ trait WiresLinearApprovalChain
             $created[$s['code']] = $stage;
         }
 
-        $reviseWithOwner
-            ? $this->wireTransitionsReviseWithOwner($created)
-            : $this->wireTransitions($created, $revisionHubCode, $hubNaTerminates);
+        $this->wireStandardTransitions($created);
     }
 
     /**
@@ -74,9 +74,20 @@ trait WiresLinearApprovalChain
             $created[$s['code']] = $stage;
         }
 
-        $reviseWithOwner
-            ? $this->wireTransitionsReviseWithOwner($created)
-            : $this->wireTransitions($created, $revisionHubCode, $hubNaTerminates);
+        $this->wireStandardTransitions($created);
+    }
+
+    /**
+     * Every seeded flow now uses the standard routing (Himalaya UAT round 2): the
+     * legacy "revision hub" and terminate-on-first-stage rules are no longer wired.
+     * $revisionHubCode / $hubNaTerminates / $reviseWithOwner are kept for signature
+     * compatibility (the hub stage is still flagged is_revision_stage).
+     *
+     * @param  array<string, WorkflowStage>  $created
+     */
+    private function wireStandardTransitions(array $created): void
+    {
+        \App\Support\Workflow\TransitionWiring::wire(array_values($created));
     }
 
     private function createStage(WorkflowTemplate $template, array $s, ?string $revisionHubCode): WorkflowStage
@@ -91,107 +102,5 @@ trait WiresLinearApprovalChain
             'is_revision_stage' => $revisionHubCode !== null && $s['code'] === $revisionHubCode,
             'is_final_distribution_stage' => $s['final'] ?? false,
         ]);
-    }
-
-    /**
-     * @param  array<string, WorkflowStage>  $created  keyed by stage code
-     */
-    private function wireTransitions(array $created, string $revisionHubCode, bool $hubNaTerminates): void
-    {
-        $hub = $created[$revisionHubCode];
-
-        foreach ($created as $code => $stage) {
-            WorkflowTransition::create([
-                'workflow_stage_id' => $stage->id,
-                'decision' => 'approved',
-                'outcome_type' => $stage->is_final_distribution_stage ? 'complete_approved' : 'next_stage',
-            ]);
-
-            if ($code === $revisionHubCode) {
-                // At the revision hub itself: AwC means "still needs work, stay here for another pass".
-                WorkflowTransition::create([
-                    'workflow_stage_id' => $stage->id,
-                    'decision' => 'approved_with_changes',
-                    'outcome_type' => 'return_to_stage',
-                    'target_stage_id' => $stage->id,
-                    'resume_at_stage_id' => $stage->id,
-                ]);
-
-                // NA at the very first gate normally terminates the document outright.
-                // Some templates (e.g. Workflow 3's "New Versions after NA") instead loop
-                // it back for a fresh version rather than hard-rejecting.
-                WorkflowTransition::create([
-                    'workflow_stage_id' => $stage->id,
-                    'decision' => 'not_approved',
-                    'outcome_type' => $hubNaTerminates ? 'terminate_rejected' : 'return_to_stage',
-                    'target_stage_id' => $hubNaTerminates ? null : $stage->id,
-                    'resume_at_stage_id' => $hubNaTerminates ? null : $stage->id,
-                ]);
-            } else {
-                // Any later stage's AwC/NA sends it back to the revision hub; once the hub
-                // clears the revised version, the engine resumes at the stage that sent it back.
-                foreach (['approved_with_changes', 'not_approved'] as $decision) {
-                    WorkflowTransition::create([
-                        'workflow_stage_id' => $stage->id,
-                        'decision' => $decision,
-                        'outcome_type' => 'return_to_stage',
-                        'target_stage_id' => $hub->id,
-                        'resume_at_stage_id' => $stage->id,
-                    ]);
-                }
-            }
-        }
-    }
-
-    /**
-     * @param  array<string, WorkflowStage>  $created  keyed by stage code, in sequence_no order
-     */
-    private function wireTransitionsReviseWithOwner(array $created): void
-    {
-        $stagesInOrder = array_values($created);
-        $firstStageId = $stagesInOrder[0]->id;
-
-        // Only the first (lowest sequence_no) stage in each parallel_group gets
-        // transition rows - WorkflowEngine always resolves a group via its
-        // representative stage (see WorkflowStage::groupSiblings()).
-        $primaryOfGroup = [];
-        foreach ($stagesInOrder as $stage) {
-            if ($stage->parallel_group && ! isset($primaryOfGroup[$stage->parallel_group])) {
-                $primaryOfGroup[$stage->parallel_group] = $stage->id;
-            }
-        }
-
-        foreach ($stagesInOrder as $stage) {
-            $isPrimary = ! $stage->parallel_group || $primaryOfGroup[$stage->parallel_group] === $stage->id;
-
-            if (! $isPrimary) {
-                continue;
-            }
-
-            WorkflowTransition::create([
-                'workflow_stage_id' => $stage->id,
-                'decision' => 'approved',
-                'outcome_type' => $stage->is_final_distribution_stage ? 'complete_approved' : 'next_stage',
-            ]);
-
-            // AwC always goes back to the document owner to revise and upload a new
-            // version - review resumes right here (or, for a parallel_group, across
-            // the whole group again) once that new version is submitted.
-            WorkflowTransition::create([
-                'workflow_stage_id' => $stage->id,
-                'decision' => 'approved_with_changes',
-                'outcome_type' => 'return_to_owner',
-                'resume_at_stage_id' => $stage->id,
-            ]);
-
-            // Not Approved at the very first gate is a hard stop (nothing to revise
-            // back to yet); anywhere else it's the same owner-revision loop as AwC.
-            WorkflowTransition::create([
-                'workflow_stage_id' => $stage->id,
-                'decision' => 'not_approved',
-                'outcome_type' => $stage->id === $firstStageId ? 'terminate_rejected' : 'return_to_owner',
-                'resume_at_stage_id' => $stage->id === $firstStageId ? null : $stage->id,
-            ]);
-        }
     }
 }

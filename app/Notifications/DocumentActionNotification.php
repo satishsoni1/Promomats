@@ -20,7 +20,7 @@ class DocumentActionNotification extends Notification implements ShouldQueue
                                // version_uploaded | claim_inserted | lifecycle_changed | overdue_reminder |
                                // retrieval_requested | retrieval_completed | retrieval_failed | content_edited |
                                // due_soon_reminder | task_reassigned | work_task_created | work_task_assigned |
-                               // work_task_completed | revision_needed
+                               // work_task_completed | revision_needed | draft_aligned
         public ?WorkflowStage $stage = null,
         public ?User $actor = null,
         public ?string $decision = null,
@@ -58,11 +58,15 @@ class DocumentActionNotification extends Notification implements ShouldQueue
             ->when($this->comments, fn ($mail) => $mail->line("Comments: {$this->comments}"))
             ->when(
                 $this->event === 'action_taken' && $this->decision === 'approved_with_changes',
-                fn ($mail) => $mail->line('The task owner revises it (or sends it to the Design Team) and uploads a new version - it then moves on to the next stage, since this stage has already approved it.')
+                fn ($mail) => $mail->line('It has moved on to the next stage. The Brand Manager can see the requested changes and upload a revised version at any point.')
             )
             ->when(
                 $this->event === 'revision_needed',
-                fn ($mail) => $mail->line('Open the document to upload the revised file yourself, or send it to the Design Team for rework. It is waiting on you until then.')
+                fn ($mail) => $mail->line('Open the job to upload the revised file yourself, or assign it to the Content Agency or the Design Team. Once you resubmit, it goes straight back to the stage that sent it back.')
+            )
+            ->when(
+                $this->event === 'draft_aligned',
+                fn ($mail) => $mail->line('Assign the creative to the Content Agency or the Design Team (or upload it yourself), then start the review from the job page. Nothing moves on until you do.')
             )
             ->when(
                 $this->event === 'stage_assigned' && $this->stage?->parallel_group,
@@ -84,6 +88,12 @@ class DocumentActionNotification extends Notification implements ShouldQueue
             ->implode(', ');
     }
 
+    /** Team named in work-task mails: the stage field carries no team, so use the open task's. */
+    protected function teamLabel(): string
+    {
+        return $this->document->workTasks()->latest('id')->first()?->teamLabel() ?? 'Design Team';
+    }
+
     protected function buildSubject(): string
     {
         return match ($this->event) {
@@ -101,10 +111,11 @@ class DocumentActionNotification extends Notification implements ShouldQueue
             'content_edited' => "Content edited: {$this->document->title}",
             'due_soon_reminder' => "Due soon: {$this->document->title} needs your review",
             'task_reassigned' => "Action required (reassigned to you): {$this->document->title}",
-            'work_task_created' => "Design Team: new work for {$this->document->title}",
-            'work_task_assigned' => "Assigned to you: design work for {$this->document->title}",
-            'work_task_completed' => "Artwork uploaded: {$this->document->title}",
+            'work_task_created' => "{$this->teamLabel()}: new work for {$this->document->title}",
+            'work_task_assigned' => "Assigned to you: work on {$this->document->title}",
+            'work_task_completed' => "File uploaded - please confirm: {$this->document->title}",
             'revision_needed' => "Action required: revise {$this->document->title}",
+            'draft_aligned' => "Draft aligned - assign the creative: {$this->document->title}",
             default => $this->document->title,
         };
     }
@@ -126,9 +137,10 @@ class DocumentActionNotification extends Notification implements ShouldQueue
             'content_edited' => "{$this->actorLabel()} edited the content of '{$this->document->title}' directly in the PDF.",
             'due_soon_reminder' => "'{$this->document->title}' is due soon at stage '{$this->stage?->name}'.",
             'task_reassigned' => "{$this->actorLabel()} reassigned stage '{$this->stage?->name}' of '{$this->document->title}' to you.",
-            'work_task_created' => "{$this->actorLabel()} sent '{$this->document->title}' to the Design Team. Anyone in the team can pick it up or assign it to a designer.",
-            'work_task_assigned' => "{$this->actorLabel()} assigned the design work for '{$this->document->title}' to you.",
-            'work_task_completed' => "{$this->actorLabel()} uploaded the artwork for '{$this->document->title}'.",
+            'work_task_created' => "{$this->actorLabel()} sent '{$this->document->title}' to the {$this->teamLabel()}. Anyone in the team can pick it up or assign it to a colleague.",
+            'work_task_assigned' => "{$this->actorLabel()} assigned the work on '{$this->document->title}' to you.",
+            'work_task_completed' => "{$this->actorLabel()} uploaded a file for '{$this->document->title}'.",
+            'draft_aligned' => "{$this->actorLabel()} aligned the draft of '{$this->document->title}' at stage '{$this->stage?->name}'. It is back with you to commission the creative and start the review.",
             'revision_needed' => "'{$this->document->title}' was {$this->decisionLabel()} at stage '{$this->stage?->name}' by {$this->actorLabel()} and is waiting on you to upload the revision.",
             default => "There is an update on '{$this->document->title}'.",
         };

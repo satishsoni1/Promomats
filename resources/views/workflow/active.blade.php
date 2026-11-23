@@ -6,6 +6,9 @@
     if ($designQueue->isNotEmpty() || auth()->user()->isDesignTeam()) {
         $tabs['design'] = ['Design Team queue', $counts['design']];
     }
+    if ($agencyQueue->isNotEmpty() || auth()->user()->isAgency()) {
+        $tabs['agency'] = ['Content Agency queue', $counts['agency']];
+    }
     if ($brandManagers->isNotEmpty()) {
         $tabs['bm'] = [auth()->user()->canAdminister() ? 'Brand Managers' : 'My Brand Manager view', null];
     }
@@ -60,7 +63,7 @@
                                             <span class="font-mono">{{ $doc->reference_no }}</span>
                                             <span>· {{ $task->stage->name }}</span>
                                             @if ($doc->documentType)<span>· {{ $doc->documentType->name }}</span>@endif
-                                            <span>· Task owner {{ $doc->owner?->name }}</span>
+                                            <span>· Brand Manager {{ $doc->owner?->name }}</span>
                                             @if ($task->reassigned_from_id)<span class="text-brand-600">· reassigned to you</span>@endif
                                         </div>
                                     </div>
@@ -74,7 +77,7 @@
 
                 @if ($myRevisions->isNotEmpty())
                     <section class="bg-white rounded-xl border border-amber-200 overflow-hidden">
-                        <h3 class="px-4 py-3 text-sm font-semibold text-gray-900 border-b border-amber-100 bg-amber-50/50">Revisions waiting on you ({{ $myRevisions->count() }})</h3>
+                        <h3 class="px-4 py-3 text-sm font-semibold text-gray-900 border-b border-amber-100 bg-amber-50/50">Your jobs waiting on you ({{ $myRevisions->count() }})</h3>
                         <div class="divide-y divide-gray-100">
                             @foreach ($myRevisions as $doc)
                                 @php $lastAction = $doc->approvalActions->first(); @endphp
@@ -83,12 +86,14 @@
                                         <a href="{{ route('documents.show', $doc) }}" class="font-medium text-gray-900 hover:text-brand-700">{{ $doc->title }}</a>
                                         <div class="text-xs text-gray-500">
                                             <span class="font-mono">{{ $doc->reference_no }}</span>
-                                            @if ($lastAction)
+                                            @if ($doc->status === 'draft_aligned')
+                                                · Draft aligned{{ $lastAction ? ' by ' . $lastAction->actor?->name . ', ' . $lastAction->acted_at?->diffForHumans() : '' }} — assign the creative, then start the review
+                                            @elseif ($lastAction)
                                                 · {{ $lastAction->decisionLabel() }} by {{ $lastAction->actor?->name }} at {{ $lastAction->stage?->name }}, {{ $lastAction->acted_at?->diffForHumans() }}
                                             @endif
                                         </div>
                                     </div>
-                                    <a href="{{ route('documents.show', $doc) }}#revise" class="inline-flex justify-center px-3 py-1.5 bg-amber-600 rounded-md text-xs font-semibold text-white hover:bg-amber-700">Upload revision / send to Design</a>
+                                    <a href="{{ route('documents.show', $doc) }}#revise" class="inline-flex justify-center px-3 py-1.5 bg-amber-600 rounded-md text-xs font-semibold text-white hover:bg-amber-700">{{ $doc->status === 'draft_aligned' ? 'Assign creative / start review' : 'Upload revision / assign' }}</a>
                                 </div>
                             @endforeach
                         </div>
@@ -97,7 +102,7 @@
 
                 @if ($myWorkTasks->isNotEmpty())
                     <section class="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                        <h3 class="px-4 py-3 text-sm font-semibold text-gray-900 border-b border-gray-100">Design work ({{ $myWorkTasks->count() }})</h3>
+                        <h3 class="px-4 py-3 text-sm font-semibold text-gray-900 border-b border-gray-100">Creative / rework ({{ $myWorkTasks->count() }})</h3>
                         @include('workflow.partials.work-task-rows', ['tasks' => $myWorkTasks])
                     </section>
                 @endif
@@ -113,12 +118,27 @@
                 <section class="bg-white rounded-xl border border-gray-200 overflow-hidden">
                     <div class="px-4 py-3 border-b border-gray-100">
                         <h3 class="text-sm font-semibold text-gray-900">Design Team queue</h3>
-                        <p class="text-xs text-gray-500">Work sent to the whole team. Take it yourself or assign it to a designer based on bandwidth.</p>
+                        <p class="text-xs text-gray-500">Work sent to the whole team. Take it yourself or assign it to a designer based on bandwidth. Your upload goes back to the Brand Manager.</p>
                     </div>
                     @if ($designQueue->isEmpty())
                         <p class="px-4 py-8 text-center text-sm text-gray-500">The queue is empty.</p>
                     @else
                         @include('workflow.partials.work-task-rows', ['tasks' => $designQueue])
+                    @endif
+                </section>
+            @endif
+
+            {{-- ---------------- Content Agency queue ---------------- --}}
+            @if ($tab === 'agency')
+                <section class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-100">
+                        <h3 class="text-sm font-semibold text-gray-900">Content Agency queue</h3>
+                        <p class="text-xs text-gray-500">Creatives and revisions assigned by Brand Managers. Your upload goes back to the Brand Manager to confirm.</p>
+                    </div>
+                    @if ($agencyQueue->isEmpty())
+                        <p class="px-4 py-8 text-center text-sm text-gray-500">The queue is empty.</p>
+                    @else
+                        @include('workflow.partials.work-task-rows', ['tasks' => $agencyQueue])
                     @endif
                 </section>
             @endif

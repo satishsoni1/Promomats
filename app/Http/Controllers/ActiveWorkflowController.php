@@ -14,15 +14,17 @@ use Illuminate\Http\Request;
  * is required, and each Brand Manager needs their own view of their jobs).
  *
  * Tabs:
- *  - action   what's waiting on me: approvals, revisions of my jobs, team work
- *  - mine     jobs I own as task owner that are still in flight
+ *  - action   what's waiting on me: approvals, my jobs back with me (revision
+ *             needed / draft aligned), team work
+ *  - mine     jobs I own as Brand Manager that are still in flight
  *  - design   the Design Team queue (Design Team members only)
+ *  - agency   the Content Agency queue (agency users only)
  *  - bm       one tab per Brand Manager with their jobs (admins see every Brand
  *             Manager; a Brand Manager sees their own)
  */
 class ActiveWorkflowController extends Controller
 {
-    public const ACTIVE_STATUSES = ['draft', 'in_review', 'approved_with_changes_pending'];
+    public const ACTIVE_STATUSES = ['draft', 'in_review', 'approved_with_changes_pending', 'draft_aligned'];
 
     public function index(Request $request)
     {
@@ -36,7 +38,7 @@ class ActiveWorkflowController extends Controller
             ->values();
 
         $myRevisions = Document::where('owner_id', $user->id)
-            ->where('status', 'approved_with_changes_pending')
+            ->whereIn('status', Document::OWNER_ACTION_STATUSES)
             ->whereDoesntHave('workTasks', fn ($q) => $q->open())
             ->with(['activeWorkflowInstance.resumeAtStage', 'approvalActions.actor', 'documentType'])
             ->latest('status_changed_at')
@@ -49,10 +51,11 @@ class ActiveWorkflowController extends Controller
 
         $myJobs = $this->activeJobsFor($user->id);
 
-        $designQueue = $user->isDesignTeam() || $user->canAdminister()
-            ? DocumentWorkTask::open()->where('team', 'design')->with(['document.owner', 'assignee', 'requester'])->orderBy('due_at')->get()
+        $queue = fn (string $team) => $user->inTeam($team) || $user->canAdminister()
+            ? DocumentWorkTask::open()->where('team', $team)->with(['document.owner', 'assignee', 'requester'])->orderBy('due_at')->get()
             : collect();
-        $designTeam = $designQueue->isNotEmpty() || $user->isDesignTeam() ? User::designTeam()->get(['id', 'name']) : collect();
+        $designQueue = $queue('design');
+        $agencyQueue = $queue('agency');
 
         // Brand Manager tabs.
         $brandManagers = User::where('is_active', true)
@@ -69,16 +72,17 @@ class ActiveWorkflowController extends Controller
             'action' => $myApprovals->count() + $myRevisions->count() + $myWorkTasks->count(),
             'mine' => $myJobs->count(),
             'design' => $designQueue->count(),
+            'agency' => $agencyQueue->count(),
         ];
 
         return view('workflow.active', compact(
-            'tab', 'myApprovals', 'myRevisions', 'myWorkTasks', 'myJobs', 'designQueue', 'designTeam',
+            'tab', 'myApprovals', 'myRevisions', 'myWorkTasks', 'myJobs', 'designQueue', 'agencyQueue',
             'brandManagers', 'selectedBm', 'bmJobs', 'counts'
         ));
     }
 
     /**
-     * A task owner's jobs still in flight, with who holds each one right now.
+     * A Brand Manager's jobs still in flight, with who holds each one right now.
      */
     protected function activeJobsFor(int $ownerId)
     {

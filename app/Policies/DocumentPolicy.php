@@ -28,7 +28,8 @@ class DocumentPolicy
 
     /**
      * Handing a pending task to another stakeholder, choosing stakeholders and due
-     * dates, and sending rework to the Design Team: the task owner (or an admin).
+     * dates, and sending work to the Content Agency / Design Team: the Brand Manager
+     * who owns the job (or an admin).
      */
     public function manageTasks(User $user, Document $document): bool
     {
@@ -61,7 +62,7 @@ class DocumentPolicy
 
         return $user->id === $document->owner_id
             || $user->can('access-admin')
-            || $user->hasRole('agency')
+            || $user->isAgency()
             || $document->openToDepartmentEditor($user)
             // "Option of uploading a revised/new document at all stages": whoever
             // currently holds a stage (other than MLR, excluded above) ...

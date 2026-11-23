@@ -1,4 +1,4 @@
-{{-- A task owner's in-flight jobs and who holds each one right now. --}}
+{{-- A Brand Manager's in-flight jobs and who holds each one right now. --}}
 @if ($jobs->isEmpty())
     <div class="bg-white rounded-xl border border-gray-200 p-10 text-center text-sm text-gray-500">{{ $empty }}</div>
 @else
@@ -37,15 +37,17 @@
                         </td>
                         <td class="px-4 py-3 text-xs text-gray-700">
                             @if ($work)
-                                Design Team{{ $work->assignee ? ' — ' . $work->assignee->name : ' (unassigned)' }}
+                                {{ $work->teamLabel() }}{{ $work->assignee ? ' — ' . $work->assignee->name : ' (unassigned)' }}
                             @elseif ($pending->isNotEmpty())
                                 @foreach ($pending->groupBy('workflow_stage_id') as $group)
                                     <div><span class="text-gray-400">{{ $group->first()->stage->name }}:</span> {{ $group->pluck('user.name')->join(', ') }}</div>
                                 @endforeach
                             @elseif ($doc->status === 'approved_with_changes_pending')
-                                <span class="text-amber-700">Task owner — revision needed</span>
+                                <span class="text-amber-700">Brand Manager — revision needed</span>
+                            @elseif ($doc->status === 'draft_aligned')
+                                <span class="text-amber-700">Brand Manager — draft aligned, assign creative / start review</span>
                             @elseif ($doc->status === 'draft')
-                                <span class="text-gray-500">Task owner — not yet submitted</span>
+                                <span class="text-gray-500">Brand Manager — not yet submitted</span>
                             @else
                                 —
                             @endif

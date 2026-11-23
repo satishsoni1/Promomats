@@ -18,9 +18,11 @@
                 <h3 class="text-lg font-semibold text-gray-900">Review &amp; Track Changes</h3>
                 <span class="text-xs text-gray-500">
                     @if ($wordEditorRole === 'viewer')
-                        ⚖️ Read-only while under legal hold
+                        {{ $document->legal_hold ? '⚖️ Read-only while under legal hold' : '🔒 Read-only — you have submitted your review' }}
+                    @elseif ($wordEditorRole === 'editor')
+                        Comment, highlight and suggest changes — and accept or reject the stakeholders' tracked changes.
                     @else
-                        View, comment, and suggest changes. Every edit is recorded as a tracked change.
+                        Comment, highlight to annotate, and suggest changes. Every edit is recorded as a tracked change.
                     @endif
                 </span>
             </div>
@@ -47,7 +49,7 @@
                             <span x-show="saving" x-cloak>Saving…</span>
                         </button>
                     </div>
-                    <p class="mt-1 text-xs text-gray-400" x-show="!dirty && !savedVersionNo">Add comments via right-click or select text → comment. Saving keeps all tracked changes and comments in the .docx, so they also open in desktop Word.</p>
+                    <p class="mt-1 text-xs text-gray-400" x-show="!dirty && !savedVersionNo">Select text → comment, or use the highlighter to annotate. Saving keeps all tracked changes and comments in the .docx, so they also open in desktop Word.</p>
                     <p class="mt-1 text-xs text-amber-700" x-show="dirty && !saving" x-cloak>Unsaved changes.</p>
                     <p class="mt-1 text-xs text-green-700" x-show="savedVersionNo" x-cloak x-text="'Saved as v' + savedVersionNo + ' — reloading…'"></p>
                     <div x-show="saveError" x-cloak x-text="saveError" class="mt-2 text-xs text-red-800 bg-red-50 border border-red-200 rounded-md p-2"></div>

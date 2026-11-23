@@ -26,6 +26,7 @@
          originalFilename: {{ \Illuminate\Support\Js::from($version->original_filename) }},
          resolveUrlTemplate: '{{ route('documents.comments.resolve', [$document, '__ID__']) }}',
          commentUpdateUrlTemplate: '{{ route('documents.comments.update', [$document, '__ID__']) }}',
+         commentsLocked: {{ $commentsLocked ? 'true' : 'false' }},
      })"
      x-init="init()">
 
@@ -295,6 +296,7 @@
                             <p class="mt-1.5 text-gray-800 whitespace-pre-line" :class="[selectedId === item.id ? '' : 'line-clamp-3', item.resolved ? 'text-gray-400 line-through' : '']">
                                 <span x-text="item.body"></span>
                                 <span x-show="item.edited" class="text-[10px] text-gray-400 no-underline">(edited)</span>
+                                <span x-show="item.draft" class="text-[10px] px-1 rounded bg-sky-100 text-sky-700 no-underline">draft — only you</span>
                             </p>
                         </template>
                         <template x-if="editingId === item.id">

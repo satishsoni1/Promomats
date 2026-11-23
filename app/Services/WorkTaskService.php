@@ -14,11 +14,13 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Design Team work that sits outside the approval stages: artwork for a placeholder
- * job, and rework after "Approved with changes". Assigned to the whole team first
- * (the "umbrella"); anyone in it can take it or hand it to one designer. Uploading
- * the file completes the task and - for rework, if the owner asked for it - sends
- * the revision straight back into the workflow.
+ * Team work that sits outside the approval stages, for the internal Design Team or
+ * the external Content Agency: the creative once the draft is aligned, artwork for a
+ * placeholder job, and rework after "Not approved". Assigned to the whole team
+ * first (the "umbrella"); anyone in it can take it or hand it to a colleague.
+ * Uploading the file completes the task and comes back to the Brand Manager to
+ * confirm - only Design Team rework the Brand Manager explicitly flagged goes
+ * straight back into review.
  */
 class WorkTaskService
 {
@@ -28,18 +30,27 @@ class WorkTaskService
         protected AuditLogger $audit,
     ) {}
 
-    public function requestArtwork(Document $document, User $requestedBy, ?string $instructions = null, ?Carbon $dueAt = null): DocumentWorkTask
+    public function requestArtwork(Document $document, User $requestedBy, ?string $instructions = null, ?Carbon $dueAt = null, string $team = 'design'): DocumentWorkTask
     {
-        return $this->create($document, 'artwork', $requestedBy, $instructions, $dueAt, resubmitOnUpload: false);
+        return $this->create($document, 'artwork', $requestedBy, $instructions, $dueAt, resubmitOnUpload: false, team: $team);
     }
 
-    public function requestRework(Document $document, User $requestedBy, ?string $instructions, ?Carbon $dueAt, bool $resubmitOnUpload, ?int $assignTo = null): DocumentWorkTask
+    /**
+     * The Brand Manager sends a job back to a team for rework (waiting on a revision)
+     * or, once the Content Manager has aligned the draft, for the creative.
+     */
+    public function requestRework(Document $document, User $requestedBy, ?string $instructions, ?Carbon $dueAt, bool $resubmitOnUpload, ?int $assignTo = null, string $team = 'design'): DocumentWorkTask
     {
-        if ($document->status !== 'approved_with_changes_pending') {
-            throw ValidationException::withMessages(['rework' => 'Rework can only be requested while the document is waiting for a revision.']);
-        }
+        $type = match ($document->status) {
+            'approved_with_changes_pending' => 'rework',
+            'draft_aligned' => 'creative',
+            default => throw ValidationException::withMessages(['rework' => 'Work can only be assigned while the job is back with its Brand Manager.']),
+        };
 
-        $task = $this->create($document, 'rework', $requestedBy, $instructions, $dueAt, $resubmitOnUpload);
+        // Agency uploads, and the creative, always come back to the Brand Manager to confirm.
+        $resubmitOnUpload = $resubmitOnUpload && $type === 'rework' && $team === 'design';
+
+        $task = $this->create($document, $type, $requestedBy, $instructions, $dueAt, $resubmitOnUpload, $team);
 
         if ($assignTo) {
             $this->assign($task, User::findOrFail($assignTo), $requestedBy);
@@ -48,16 +59,20 @@ class WorkTaskService
         return $task;
     }
 
-    protected function create(Document $document, string $type, User $requestedBy, ?string $instructions, ?Carbon $dueAt, bool $resubmitOnUpload): DocumentWorkTask
+    protected function create(Document $document, string $type, User $requestedBy, ?string $instructions, ?Carbon $dueAt, bool $resubmitOnUpload, string $team = 'design'): DocumentWorkTask
     {
+        if (! array_key_exists($team, DocumentWorkTask::TEAM_LABELS)) {
+            throw ValidationException::withMessages(['rework' => 'Unknown team.']);
+        }
+
         if ($document->workTasks()->open()->exists()) {
-            throw ValidationException::withMessages(['rework' => 'This document already has open work with the Design Team.']);
+            throw ValidationException::withMessages(['rework' => 'This job already has open work with a team.']);
         }
 
         $task = DocumentWorkTask::create([
             'document_id' => $document->id,
             'type' => $type,
-            'team' => 'design',
+            'team' => $team,
             'requested_by' => $requestedBy->id,
             'instructions' => $instructions,
             'resubmit_on_upload' => $resubmitOnUpload,
@@ -68,25 +83,25 @@ class WorkTaskService
             action: 'WORK_TASK_CREATED',
             document: $document,
             actor: $requestedBy,
-            description: "{$task->typeLabel()} sent to the Design Team" . ($instructions ? ": {$instructions}" : '.'),
+            description: "{$task->typeLabel()} sent to the {$task->teamLabel()}" . ($instructions ? ": {$instructions}" : '.'),
         );
 
-        $this->notify(User::designTeam()->get(), $document, 'work_task_created', $requestedBy, $instructions);
+        $this->notify(User::teamMembers($team)->get(), $document, 'work_task_created', $requestedBy, $instructions);
 
         return $task;
     }
 
     /**
-     * Hand the task to one designer (any Design Team member may do this, as may the
-     * task owner or an admin).
+     * Hand the task to one person in its team (any team member may do this, as may
+     * the Brand Manager or an admin).
      */
     public function assign(DocumentWorkTask $task, User $designer, User $actor): DocumentWorkTask
     {
         if ($task->status !== 'open') {
             throw ValidationException::withMessages(['assign' => 'This task is no longer open.']);
         }
-        if (! $designer->is_active || ! $designer->isDesignTeam()) {
-            throw ValidationException::withMessages(['assign' => "{$designer->name} isn't in the Design Team."]);
+        if (! $designer->is_active || ! $designer->loadMissing('roles')->inTeam($task->team)) {
+            throw ValidationException::withMessages(['assign' => "{$designer->name} isn't in the {$task->teamLabel()}."]);
         }
 
         $task->update(['assigned_to' => $designer->id]);
@@ -125,7 +140,7 @@ class WorkTaskService
                 document: $document,
                 file: $file,
                 uploader: $designer,
-                changeNotes: $notes ?: ($task->type === 'rework' ? 'Rework by Design Team' : 'Artwork uploaded by Design Team'),
+                changeNotes: $notes ?: "{$task->typeLabel()} by the {$task->teamLabel()}",
             );
 
             $task->update([
@@ -140,7 +155,12 @@ class WorkTaskService
                 $document->update(['is_placeholder' => false]);
             }
 
-            $this->audit->record(action: 'VERSION_CREATED', document: $document, version: $version, actor: $designer, description: "{$task->typeLabel()} completed.");
+            $this->audit->record(action: 'VERSION_CREATED', document: $document, version: $version, actor: $designer, description: "{$task->typeLabel()} completed by the {$task->teamLabel()}.");
+
+            // Mid-review uploads carry on with the new file, as with any other upload.
+            if ($document->activeWorkflowInstance && $document->status === 'in_review') {
+                $this->engine->adoptNewVersion($document->activeWorkflowInstance, $version);
+            }
 
             $resubmitted = false;
             $instance = $document->activeWorkflowInstance;
@@ -154,7 +174,11 @@ class WorkTaskService
                 $document,
                 'work_task_completed',
                 $designer,
-                $resubmitted ? 'It has been sent back into review automatically.' : ($task->type === 'artwork' ? 'Submit it for review when ready.' : 'Resubmit it for review when ready.'),
+                $resubmitted ? 'It has been sent back into review automatically.' : match ($task->type) {
+                    'creative' => 'Check it, then start the review from the job page.',
+                    'artwork' => 'Check it, then submit it for Content Manager alignment or review.',
+                    default => 'Check it, then resubmit it - it goes back to the stage that sent it back.',
+                },
             );
 
             return $version;
@@ -164,7 +188,7 @@ class WorkTaskService
     public function cancel(DocumentWorkTask $task, User $actor): void
     {
         $task->update(['status' => 'cancelled']);
-        $this->audit->record(action: 'WORK_TASK_CANCELLED', document: $task->document, actor: $actor, description: "{$task->typeLabel()} withdrawn from the Design Team.");
+        $this->audit->record(action: 'WORK_TASK_CANCELLED', document: $task->document, actor: $actor, description: "{$task->typeLabel()} withdrawn from the {$task->teamLabel()}.");
     }
 
     protected function notify($users, Document $document, string $event, ?User $actor, ?string $comments = null): void

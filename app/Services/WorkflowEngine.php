@@ -12,6 +12,7 @@ use App\Events\RevisionRequested;
 use App\Events\WorkflowCompleted;
 use App\Models\Document;
 use App\Models\DocumentApprovalAction;
+use App\Models\DocumentComment;
 use App\Models\DocumentStageAssignee;
 use App\Models\DocumentVersion;
 use App\Models\DocumentWorkflowInstance;
@@ -105,7 +106,31 @@ class WorkflowEngine
 
         $anyOpened = false;
 
+        // MLR tracks the Brand Manager didn't pick anyone for are left out, once they
+        // have picked people for at least one track in the group (UAT feedback: "it
+        // should be only triggered to the selected stakeholder"). With no picks in
+        // the group at all, every track goes to its usual reviewers as before.
+        $groupHasPicks = $group->count() > 1
+            && $group->contains(fn (WorkflowStage $s) => $instance->document->approverIdsForStage($s) !== null);
+
         foreach ($group as $memberStage) {
+            if ($groupHasPicks && $instance->document->approverIdsForStage($memberStage) === null) {
+                $this->audit->record(
+                    action: 'SKIPPED',
+                    document: $instance->document,
+                    instance: $instance,
+                    stage: $memberStage,
+                    description: "Stage \"{$memberStage->name}\" skipped - the Brand Manager didn't select a stakeholder for it.",
+                );
+
+                DocumentWorkflowStageRun::updateOrCreate(
+                    ['document_workflow_instance_id' => $instance->id, 'workflow_stage_id' => $memberStage->id],
+                    ['status' => 'resolved', 'decision' => 'approved', 'resolved_at' => now()]
+                );
+
+                continue;
+            }
+
             // Spec REQ-53: a stage can be conditional on the document (brand,
             // document type, target audience, ...). One that doesn't apply
             // here is skipped entirely - no tasks, no approvers required.
@@ -139,7 +164,7 @@ class WorkflowEngine
 
             if ($userIds->isEmpty()) {
                 throw ValidationException::withMessages([
-                    'workflow' => "Stage '{$memberStage->name}' has no resolvable approvers (check role assignments).",
+                    'workflow' => "Stage '{$memberStage->name}' has no one who can take it (check role assignments - Brand Managers and the job's own owner can't approve it).",
                 ]);
             }
 
@@ -188,9 +213,10 @@ class WorkflowEngine
             ->values();
 
         // Brand Managers start jobs and assign stakeholders but never approve or
-        // reject (UAT feedback) - so they're never handed a decision task.
+        // reject, and nobody checks their own job ("makers can't be checkers") - so
+        // neither is ever handed a decision task.
         return User::with('roles')->whereIn('id', $ids)->get()
-            ->reject(fn (User $u) => $u->isBrandManagerOnly())
+            ->reject(fn (User $u) => $u->isBrandManagerOnly() || $u->id === $document->owner_id)
             ->pluck('id')
             ->values();
     }
@@ -254,6 +280,9 @@ class WorkflowEngine
 
             $assignee->update(['status' => 'acted', 'acted_at' => now()]);
 
+            // Submitting the review publishes this reviewer's draft comments.
+            DocumentComment::publishDraftsBy($instance->document_id, [$actor->id]);
+
             if ($decision === 'approved_with_changes') {
                 RevisionRequested::dispatch($instance, $stage, $actor, $comments);
             } else {
@@ -299,7 +328,10 @@ class WorkflowEngine
             return null;
         }
 
-        $instance->pendingAssignees()->where('workflow_stage_id', $stage->id)->update(['status' => 'superseded']);
+        $superseded = $instance->pendingAssignees()->where('workflow_stage_id', $stage->id);
+        // The stage has moved on, so anything its other reviewers drafted is now visible too.
+        DocumentComment::publishDraftsBy($instance->document_id, (clone $superseded)->pluck('user_id'));
+        $superseded->update(['status' => 'superseded']);
 
         DocumentWorkflowStageRun::updateOrCreate(
             ['document_workflow_instance_id' => $instance->id, 'workflow_stage_id' => $stage->id],
@@ -408,6 +440,21 @@ class WorkflowEngine
             ]);
         }
 
+        // A draft stage signed off: the job goes back to the Brand Manager, who
+        // commissions the creative (Content Agency / Design Team) and triggers the
+        // next step themselves - nothing moves on automatically (UAT feedback:
+        // "any trigger in workflow should be initiated by the Brand Manager").
+        if ($stage->isDraft() && $decision === 'approved' && $transition->outcome_type === 'next_stage') {
+            $next = $transition->targetStage ?? $stage->nextStage();
+            if ($next) {
+                $instance->update(['resume_at_stage_id' => $next->id, 'current_stage_id' => $stage->id]);
+                $instance->document->update(['status' => 'draft_aligned']);
+                DocumentReturnedToOwner::dispatch($instance, $stage, 'draft_aligned', $actor);
+
+                return;
+            }
+        }
+
         switch ($transition->outcome_type) {
             case 'next_stage':
                 // Leaving a legacy "revision hub" after it cleared a revision: pick
@@ -480,7 +527,8 @@ class WorkflowEngine
             // revision is in, move on to the next stage (or finish, after the last
             // one) instead of sending it back to the same reviewers (UAT feedback).
             // Not Approved still goes back to the stage that rejected it.
-            if ($this->wasApprovedWithChanges($instance, $resumeStage)
+            if (! $resumeStage->isDraft()
+                && $this->wasApprovedWithChanges($instance, $resumeStage)
                 && ($instance->document->workflowTemplate->awc_resume ?? 'next_stage') === 'next_stage') {
                 $next = $resumeStage->nextStage();
                 $next ? $this->enterStage($instance, $next) : $this->completeInstance($instance, 'approved', $newVersion->uploader);
@@ -489,6 +537,37 @@ class WorkflowEngine
             }
 
             $this->enterStage($instance, $resumeStage);
+        });
+    }
+
+    /**
+     * The Brand Manager triggers the review after the Content Manager aligned the
+     * draft (status draft_aligned) - usually once the Content Agency / Design Team
+     * has uploaded the creative. Picks up at the stage after the draft stage.
+     */
+    public function continueAfterDraft(DocumentWorkflowInstance $instance, DocumentVersion $version, User $actor): void
+    {
+        DB::transaction(function () use ($instance, $version, $actor) {
+            $document = $instance->document;
+            $next = $instance->resumeAtStage;
+
+            if ($document->status !== 'draft_aligned' || ! $next) {
+                throw ValidationException::withMessages(['workflow' => 'This job is not waiting to start its review.']);
+            }
+
+            $instance->update(['document_version_id' => $version->id, 'resume_at_stage_id' => null]);
+            $document->update(['status' => 'in_review']);
+
+            $this->audit->record(
+                action: 'WORKFLOW_CONTINUED',
+                document: $document,
+                instance: $instance,
+                stage: $next,
+                actor: $actor,
+                description: "{$actor->name} sent v{$version->version_no} on to \"{$next->name}\" after the draft was aligned.",
+            );
+
+            $this->enterStage($instance, $next);
         });
     }
 
@@ -517,6 +596,9 @@ class WorkflowEngine
             }
             if ($newUser->id === $task->user_id) {
                 throw ValidationException::withMessages(['reassign' => 'That person already has this task.']);
+            }
+            if ($newUser->id === $task->instance->document->owner_id) {
+                throw ValidationException::withMessages(['reassign' => "{$newUser->name} owns this job - makers can't be checkers."]);
             }
             if (! $newUser->is_active || ! $newUser->canRecordDecisions()) {
                 throw ValidationException::withMessages(['reassign' => "{$newUser->name} can't take approval tasks."]);
@@ -578,7 +660,9 @@ class WorkflowEngine
         ]);
 
         $documentStatus = match ($status) {
-            'approved' => 'approved_for_distribution',
+            // Most flows end "Approved for Distribution"; the Chairperson flows end
+            // "Approved for Production" - reachable only through that sign-off.
+            'approved' => $instance->template?->completion_status ?: 'approved_for_distribution',
             'approved_with_changes' => 'approved',
             'rejected' => 'rejected',
             default => 'in_review',
