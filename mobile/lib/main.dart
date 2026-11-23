@@ -16,7 +16,7 @@ class VodoApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'VODO',
+      title: 'VODO Vault',
       debugShowCheckedModeBanner: false,
       theme: vodoTheme(),
       // Picks up from the native launch screen, checks the session, then routes.

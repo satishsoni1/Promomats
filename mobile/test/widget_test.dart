@@ -9,7 +9,7 @@ void main() {
   testWidgets('sign-in screen shows the brand, the credential fields and server settings', (tester) async {
     await tester.pumpWidget(MaterialApp(theme: vodoTheme(), home: const LoginScreen()));
 
-    expect(find.text('VODO'), findsOneWidget);
+    expect(find.byType(VodoWordmark), findsOneWidget);
     expect(find.text('Welcome back'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Email'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Password'), findsOneWidget);
@@ -38,7 +38,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: vodoTheme(), home: const SplashScreen(minimumDuration: Duration(milliseconds: 300))));
 
     expect(find.byType(VodoMark), findsOneWidget);
-    expect(find.text('PromoMats review & approval'), findsOneWidget);
+    expect(find.byType(VodoWordmark), findsOneWidget);
+    expect(find.text('Review & approval'), findsOneWidget);
 
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();

@@ -1,12 +1,12 @@
-# VODO mobile (Flutter)
+# VODO Vault mobile (Flutter)
 
-The VODO PromoMats web app on a phone — the same workflow, permissions and data,
+The VODO Vault web app on a phone — the same workflow, permissions and data,
 through its API (`routes/api.php`). Every action runs the web app's own controller,
 so the phone follows exactly the same rules as the browser.
 
 What it does:
 
-- **Splash and sign-in**: VODO branding, the same email and password as the web,
+- **Splash and sign-in**: VODO Vault branding, the same email and password as the web,
   *Forgot password* (opens the web reset page) and *Server settings*.
 - **Active Workflow**, with the web's tabs:
   - **Needs my action**: approvals, your jobs that are back with you, and team work.

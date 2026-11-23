@@ -7,7 +7,7 @@ import 'home_shell.dart';
 import 'login_screen.dart';
 
 /// Opening screen: continues seamlessly from the native (white) launch screen,
-/// animates the VODO mark in, checks the saved session, then goes to Active
+/// animates the VODO Vault mark in, checks the saved session, then goes to Active
 /// Workflow - or to sign-in if there is no session or it has expired.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key, this.minimumDuration = const Duration(milliseconds: 1400)});
@@ -71,9 +71,9 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
               child: SlideTransition(
                 position: Tween(begin: const Offset(0, 0.4), end: Offset.zero).animate(_text),
                 child: Column(children: [
-                  Text('VODO', style: Theme.of(context).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w900, color: brandTeal, letterSpacing: 2)),
+                  const VodoWordmark(size: 38),
                   const SizedBox(height: 6),
-                  Text('PromoMats review & approval', style: TextStyle(color: Colors.grey.shade600, letterSpacing: 0.4)),
+                  Text('Review & approval', style: TextStyle(color: Colors.grey.shade600, letterSpacing: 0.4)),
                 ]),
               ),
             ),

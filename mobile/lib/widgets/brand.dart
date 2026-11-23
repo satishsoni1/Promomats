@@ -32,6 +32,24 @@ class VodoTile extends StatelessWidget {
       );
 }
 
+/// The product name, "VODO Vault": VODO bold, Vault light.
+class VodoWordmark extends StatelessWidget {
+  const VodoWordmark({super.key, this.color = brandTeal, this.size = 36});
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Text.rich(
+        TextSpan(children: [
+          TextSpan(text: 'VODO', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: size * 0.05)),
+          TextSpan(text: ' Vault', style: TextStyle(fontWeight: FontWeight.w300, letterSpacing: size * 0.02)),
+        ]),
+        textAlign: TextAlign.center,
+        style: TextStyle(fontSize: size, color: color, height: 1.1),
+        semanticsLabel: 'VODO Vault',
+      );
+}
+
 /// The web sidebar's teal gradient.
 const brandGradient = LinearGradient(
   begin: Alignment.topCenter,

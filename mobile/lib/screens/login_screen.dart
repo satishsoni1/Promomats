@@ -71,11 +71,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       // ---- brand header ----
                       const Center(child: VodoTile(size: 92)),
                       const SizedBox(height: 18),
-                      Text('VODO',
-                          textAlign: TextAlign.center,
-                          style: text.headlineLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.w900, letterSpacing: 2)),
+                      const VodoWordmark(color: Colors.white, size: 34),
                       const SizedBox(height: 4),
-                      Text('PromoMats review & approval',
+                      Text('Review & approval',
                           textAlign: TextAlign.center, style: text.bodyMedium?.copyWith(color: Colors.white.withValues(alpha: 0.75))),
                       const SizedBox(height: 28),
 
@@ -90,7 +88,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                             Text('Welcome back', style: text.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                             const SizedBox(height: 2),
-                            Text('Sign in with your VODO account', style: text.bodySmall?.copyWith(color: Colors.grey.shade600)),
+                            Text('Sign in with your VODO Vault account', style: text.bodySmall?.copyWith(color: Colors.grey.shade600)),
                             const SizedBox(height: 20),
                             TextField(
                               controller: _email,
