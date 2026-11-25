@@ -27,6 +27,9 @@ export default function searchSelect(cfg = {}) {
         // so "required" moves to the visible search box.
         nativeRequired: false,
         placeholder: cfg.placeholder || 'Search…',
+        // The search box stays hidden until this has run, so a page whose script
+        // fails to load keeps the plain <select> instead of a broken box.
+        ready: false,
 
         init() {
             this.select = this.$el.querySelector('select');
@@ -37,9 +40,10 @@ export default function searchSelect(cfg = {}) {
                 if (!cfg.clearOnPick) this.value = this.select.value;
                 this.nativeRequired = this.select.required;
                 this.select.required = false;
-                this.select.classList.add('hidden');
+                this.select.style.display = 'none';
                 this.select.tabIndex = -1;
             }
+            this.ready = true;
         },
 
         get source() {

@@ -33,11 +33,14 @@
      })"
      @if ($model) x-modelable="value" x-model="{{ $model }}" @endif
      @click.outside="close()"
-     {{ $attributes->merge(['class' => 'relative']) }}>
+     {{ $attributes->merge(['class' => 'relative [&>select]:block [&>select]:w-full [&>select]:border-gray-300 [&>select]:rounded-md [&>select]:shadow-sm [&>select]:focus:border-brand-500 [&>select]:focus:ring-brand-500 ' . ($size === 'sm' ? '[&>select]:text-xs [&>select]:py-1' : '[&>select]:text-sm [&>select]:py-2')]) }}>
     {{ $slot }}
     @if ($name)
         <input type="hidden" name="{{ $name }}" :value="value">
     @endif
+    {{-- Shown once the script has started; until then (or if it can't load) the
+         plain <select> in the slot stays visible and usable. --}}
+    <div x-show="ready" style="display: none">
     <div class="relative">
         <input type="text" x-ref="input" autocomplete="off"
                x-model="query"
@@ -65,4 +68,5 @@
         <li x-show="! items.length" class="px-3 py-1.5 text-gray-400">No matches</li>
         <li x-show="moreCount > 0" class="px-3 py-1 text-[11px] text-gray-400 border-t border-gray-100" x-text="'Type to search ' + moreCount + ' more…'"></li>
     </ul>
+    </div>
 </div>
