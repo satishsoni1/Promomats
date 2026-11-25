@@ -48,7 +48,7 @@ class DemoUsersSeeder extends Seeder
                 ]
             );
 
-            $role = Role::where('name', $u['role'])->first();
+            $role = Role::where('slug', \Illuminate\Support\Str::slug($u['role']))->first();
             if ($role) {
                 $user->roles()->syncWithoutDetaching([$role->id]);
             }

@@ -11,7 +11,7 @@ class Document extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'title', 'description', 'category', 'brand_id', 'document_type_id', 'channel', 'products', 'countries', 'target_audience', 'reference_no', 'owner_id', 'workflow_template_id',
+        'title', 'description', 'team', 'category', 'brand_id', 'sku_id', 'country_id', 'document_type_id', 'channel', 'products', 'countries', 'target_audience', 'reference_no', 'owner_id', 'workflow_template_id',
         'allow_department_editing', 'is_placeholder', 'due_date',
         'project_id', 'cycle_id', 'status', 'start_date', 'expiry_date', 'aging_warning_days',
         'is_expired', 'is_aging_flagged', 'current_version_id',
@@ -59,6 +59,7 @@ class Document extends Model
         'in_review' => 'In Review',
         'approved_with_changes_pending' => 'Revise & Resubmit',
         'draft_aligned' => 'Draft Aligned',
+        'pending_closure' => 'Pending Closure',
         'rejected' => 'Rejected',
         'approved' => 'Approved',
         'approved_for_production' => 'Approved for Production',
@@ -79,7 +80,11 @@ class Document extends Model
     // Back with the Brand Manager (job owner) for their next move: upload a revision
     // after "Not approved", or - once the Content Manager has aligned the draft -
     // commission the creative and trigger the review.
-    public const OWNER_ACTION_STATUSES = ['approved_with_changes_pending', 'draft_aligned'];
+    // ... or, once the Chairperson has signed off, give the final approval and close it.
+    public const OWNER_ACTION_STATUSES = ['approved_with_changes_pending', 'draft_aligned', 'pending_closure'];
+
+    // MOM 24 Nov: Category is a fixed choice.
+    public const CATEGORIES = ['Promotional', 'Non-Promotional'];
 
     public function owner()
     {
@@ -102,6 +107,17 @@ class Document extends Model
     {
         if ($user->canAdminister()) {
             return $query;
+        }
+
+        // External agency logins see only the jobs the Brand Manager currently has
+        // with their agency - not the library, not the workflow around them.
+        if ($user->isAgencyUser()) {
+            return $query->whereExists(fn ($q) => $q->selectRaw(1)->from('document_work_tasks as awt')
+                ->whereColumn('awt.document_id', 'documents.id')
+                ->where('awt.team', 'agency')
+                ->where('awt.status', 'open')
+                ->where(fn ($m) => $m->whereNull('awt.content_agency_id')
+                    ->when($user->content_agency_id, fn ($m2) => $m2->orWhere('awt.content_agency_id', $user->content_agency_id))));
         }
 
         $uid = $user->id;
@@ -127,10 +143,13 @@ class Document extends Model
                     $q->selectRaw(1)->from('document_work_tasks as wt')->whereColumn('wt.document_id', 'documents.id')
                         ->where(function ($m) use ($user, $uid) {
                             $m->where('wt.assigned_to', $uid);
-                            foreach (['design', 'agency'] as $team) {
-                                if ($user->inTeam($team)) {
-                                    $m->orWhere('wt.team', $team);
-                                }
+                            if ($user->inTeam('design')) {
+                                $m->orWhere('wt.team', 'design');
+                            }
+                            if ($user->inTeam('agency')) {
+                                $m->orWhere(fn ($a) => $a->where('wt.team', 'agency')
+                                    ->where(fn ($ag) => $ag->whereNull('wt.content_agency_id')
+                                        ->when($user->content_agency_id, fn ($ag2) => $ag2->orWhere('wt.content_agency_id', $user->content_agency_id))));
                             }
                         });
                 });
@@ -146,8 +165,18 @@ class Document extends Model
     public function isVisibleTo(User $user): bool
     {
         return $user->canAdminister()
-            || $this->owner_id === $user->id
+            || ($this->owner_id === $user->id && ! $user->isAgencyUser())
             || static::whereKey($this->id)->visibleTo($user)->exists();
+    }
+
+    public function sku()
+    {
+        return $this->belongsTo(Sku::class);
+    }
+
+    public function country()
+    {
+        return $this->belongsTo(Country::class);
     }
 
     public function workTasks()
@@ -170,6 +199,61 @@ class Document extends Model
             ->where('workflow_stage_id', $stage->id)->first();
 
         return (int) ($override?->due_hours ?? $stage->sla_hours ?? config('promomats.due_dates.default_stage_hours', 48));
+    }
+
+    /**
+     * The exact due date/time the Brand Manager set for a stage, if any (MOM 24 Nov:
+     * "can change the due date/time of any stage to handle urgency").
+     */
+    public function dueOverrideForStage(WorkflowStage $stage): ?\Illuminate\Support\Carbon
+    {
+        $override = ($this->relationLoaded('stageSettings') ? $this->stageSettings : $this->stageSettings())
+            ->where('workflow_stage_id', $stage->id)->first();
+
+        return $override?->due_at;
+    }
+
+    /**
+     * When a stage is due if it starts at $from (default now): the Brand Manager's
+     * exact date/time while it is still ahead, otherwise $from + the stage's due
+     * period.
+     */
+    public function dueAtForStage(WorkflowStage $stage, ?\Illuminate\Support\Carbon $from = null): \Illuminate\Support\Carbon
+    {
+        $override = $this->dueOverrideForStage($stage);
+
+        return $override && $override->isFuture()
+            ? $override->copy()
+            : ($from ?? now())->copy()->addHours($this->dueHoursForStage($stage));
+    }
+
+    /** Whether the Brand Manager picked named stakeholders for any stage of this job. */
+    public function hasStakeholderPicks(): bool
+    {
+        return $this->relationLoaded('stageApproverSelections')
+            ? $this->stageApproverSelections->isNotEmpty()
+            : $this->stageApproverSelections()->exists();
+    }
+
+    /**
+     * The people a stage goes to on this job: the Brand Manager's picks, or for the
+     * Chairperson stage with no pick the configured Chairperson approver (MOM 24 Nov:
+     * "auto-select the Jalba email user as chairperson approver"). Null when neither
+     * applies - the stage's own role pool is used, or it is skipped once the Brand
+     * Manager has picked stakeholders elsewhere.
+     *
+     * @return \Illuminate\Support\Collection<int, int>|null
+     */
+    public function effectivePicksForStage(WorkflowStage $stage)
+    {
+        $picked = $this->approverIdsForStage($stage);
+        if ($picked !== null || ! $stage->isChairperson()) {
+            return $picked;
+        }
+
+        $default = User::defaultChairpersonApprover($this->brand);
+
+        return $default && $default->id !== $this->owner_id ? collect([$default->id]) : null;
     }
 
     public function channelLabel(): ?string
@@ -270,26 +354,30 @@ class Document extends Model
     }
 
     /**
-     * A reviewer who has submitted their review is locked out of commenting (and
-     * editing their comments) while the job is with another stakeholder. It
-     * unlocks if the job comes back to them with a new task.
+     * A reviewer whose stage has decided is locked out of commenting (and editing
+     * their comments) - MOM 24 Nov: "once a stage approves, that stage can no longer
+     * add new comments". That holds for the rest of the job's life, including after
+     * the workflow has finished; it only unlocks while the job is back with them on
+     * a new task (e.g. returned to TM after a later rejection).
      */
     public function commentsLockedFor(User $user): bool
     {
-        $instance = $this->activeWorkflowInstance;
-
-        if (! $instance || $user->id === $this->owner_id) {
+        if ($user->id === $this->owner_id) {
             return false;
         }
 
-        $tasks = $instance->assignees()->where('user_id', $user->id)->pluck('status');
+        $tasks = DocumentStageAssignee::query()
+            ->whereIn('document_workflow_instance_id', $this->workflowInstances()->select('id'))
+            ->where('user_id', $user->id)
+            ->pluck('status');
 
         return $tasks->isNotEmpty() && ! $tasks->contains('pending');
     }
 
     public function approvalActions()
     {
-        return $this->hasMany(DocumentApprovalAction::class)->orderByDesc('acted_at');
+        // id breaks ties between decisions recorded in the same second.
+        return $this->hasMany(DocumentApprovalAction::class)->orderByDesc('acted_at')->orderByDesc('id');
     }
 
     /**
@@ -470,6 +558,11 @@ class Document extends Model
     public function statusLabel(): string
     {
         return self::STATUS_LABELS[$this->status] ?? str($this->status)->headline();
+    }
+
+    public function teamLabel(): string
+    {
+        return \App\Support\Teams::label($this->team);
     }
 
     public function targetAudienceLabel(): ?string

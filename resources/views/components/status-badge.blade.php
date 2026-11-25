@@ -5,6 +5,7 @@
         'in_review' => 'bg-amber-50 text-amber-700 ring-amber-600/20',
         'approved_with_changes_pending' => 'bg-orange-50 text-orange-700 ring-orange-600/20',
         'draft_aligned' => 'bg-violet-50 text-violet-700 ring-violet-600/20',
+        'pending_closure' => 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
         'rejected' => 'bg-red-50 text-red-700 ring-red-600/20',
         'approved' => 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
         'approved_for_production' => 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',

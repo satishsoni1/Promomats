@@ -32,6 +32,8 @@ class MobileApiParityTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // The Pharma R&D / Legal / Regulatory Affairs rule has its own test (VodoVaultReviewTest).
+        config(['promomats.workflow.required_stakeholders' => []]);
         Storage::fake('documents');
         Notification::fake();
     }
@@ -123,6 +125,7 @@ class MobileApiParityTest extends TestCase
         $this->user('legal');
         $s = $this->flow([['TM', 'tmagm', 'review', null], ['RND', 'rd', 'review', 'MLR'], ['LEGAL', 'legal', 'review', 'MLR'], ['FINAL', 'chairperson', 'review', null]]);
         $doc = $this->job($s['TM'], $owner);
+        $doc->stageApproverSelections()->create(['workflow_stage_id' => $s['TM']->id, 'user_id' => $tm->id]);
         $doc->stageApproverSelections()->create(['workflow_stage_id' => $s['RND']->id, 'user_id' => $rnd->id]);
         app(WorkflowEngine::class)->start($doc, $doc->currentVersion, $owner);
         $ht = $this->auth($tm);
@@ -138,7 +141,8 @@ class MobileApiParityTest extends TestCase
         $owners = $this->getJson("/api/v1/documents/{$doc->id}", $this->auth($owner))->assertOk();
         $this->assertSame('Check the claim', $owners->json('comments.0.body'));
         $states = collect($owners->json('stages'))->pluck('state', 'name');
-        $this->assertSame(['TM' => 'done', 'RND' => 'current', 'LEGAL' => 'skipped', 'FINAL' => 'upcoming'], $states->all());
+        // MOM 24 Nov: FINAL had nobody selected either, so it is skipped too.
+        $this->assertSame(['TM' => 'done', 'RND' => 'current', 'LEGAL' => 'skipped', 'FINAL' => 'skipped'], $states->all());
 
         $this->getJson("/api/v1/documents/{$doc->id}", $ht)->assertJsonPath('permissions.comments_locked', true);
         $this->postJson("/api/v1/documents/{$doc->id}/comments", ['body' => 'More'], $ht)->assertForbidden();
@@ -198,7 +202,11 @@ class MobileApiParityTest extends TestCase
         $this->getJson("/api/v1/documents/{$doc->id}", $hc)->assertJsonPath('my_task.is_offline', true);
         $this->postJson("/api/v1/documents/{$doc->id}/decision", ['decision' => 'approved'], $hc)->assertUnprocessable();
         $this->post("/api/v1/documents/{$doc->id}/decision", ['decision' => 'approved', 'signed_copy' => UploadedFile::fake()->create('signed.pdf', 10)], $hc)
-            ->assertOk()->assertJsonPath('status', 'approved_for_production');
+            ->assertOk()->assertJsonPath('status', 'pending_closure');
+
+        // The Brand Manager's final approval & closure.
+        $this->getJson("/api/v1/documents/{$doc->id}", $hb)->assertJsonPath('closure_panel.chairperson_decision', 'approved');
+        $this->postJson("/api/v1/documents/{$doc->id}/close", [], $hb)->assertOk()->assertJsonPath('status', 'approved_for_production');
 
         $this->getJson("/api/v1/documents/{$doc->id}", $hb)->assertJsonPath('lifecycle.0.status', 'approved_for_distribution');
         $this->postJson("/api/v1/documents/{$doc->id}/status", ['status' => 'approved_for_distribution'], $hb)->assertOk()->assertJsonPath('status', 'approved_for_distribution');

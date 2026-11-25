@@ -40,7 +40,9 @@ class UserController extends Controller
     {
         $roles = $this->assignableRoles($request->user());
 
-        return view('admin.users.create', compact('roles'))
+        $agencies = \App\Models\ContentAgency::active()->orderBy('name')->get(['id', 'name']);
+
+        return view('admin.users.create', compact('roles', 'agencies'))
             ->with('departmentScope', $request->user()->adminDepartmentScope());
     }
 
@@ -60,6 +62,8 @@ class UserController extends Controller
             'designation' => ['nullable', 'string', 'max:120'],
             'roles' => ['required', 'array', 'min:1'],
             'roles.*' => [Rule::in($allowedRoleIds)],
+            // Content Agency users belong to one agency (MOM 24 Nov).
+            'content_agency_id' => ['nullable', 'integer', 'exists:content_agencies,id'],
         ]);
 
         $tempPassword = Str::random(12);
@@ -70,6 +74,7 @@ class UserController extends Controller
             'email' => $validated['email'],
             'department' => $validated['department'] ?? $scope,
             'designation' => $validated['designation'] ?? null,
+            'content_agency_id' => $validated['content_agency_id'] ?? null,
             'password' => Hash::make($tempPassword),
             'must_change_password' => true,
             'created_by' => $request->user()->id,

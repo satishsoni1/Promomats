@@ -39,6 +39,8 @@ class HimalayaUatRoundTwoTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // The Pharma R&D / Legal / Regulatory Affairs rule has its own test (VodoVaultReviewTest).
+        config(['promomats.workflow.required_stakeholders' => []]);
         Storage::fake('documents');
         Notification::fake();
         $this->engine = app(WorkflowEngine::class);
@@ -114,6 +116,7 @@ class HimalayaUatRoundTwoTest extends TestCase
         $legal = $this->userWithRole('legal');
         $s = $this->mlrFlow();
         $document = $this->document($s['TM_AGM'], $owner);
+        $document->stageApproverSelections()->create(['workflow_stage_id' => $s['TM_AGM']->id, 'user_id' => $tm->id]);
         $document->stageApproverSelections()->create(['workflow_stage_id' => $s['RND']->id, 'user_id' => $rndA->id]);
 
         $instance = $this->engine->start($document, $document->currentVersion, $owner);
@@ -127,7 +130,7 @@ class HimalayaUatRoundTwoTest extends TestCase
 
         // With every track picked, all three open at the same time.
         $document2 = $this->document($s['TM_AGM'], $owner);
-        foreach ([$s['RND']->id => $rndB, $s['REG']->id => $reg, $s['LEGAL']->id => $legal] as $stageId => $u) {
+        foreach ([$s['TM_AGM']->id => $tm, $s['RND']->id => $rndB, $s['REG']->id => $reg, $s['LEGAL']->id => $legal] as $stageId => $u) {
             $document2->stageApproverSelections()->create(['workflow_stage_id' => $stageId, 'user_id' => $u->id]);
         }
         $instance2 = $this->engine->start($document2, $document2->currentVersion, $owner);
@@ -197,7 +200,8 @@ class HimalayaUatRoundTwoTest extends TestCase
         $this->assertFalse($task->resubmit_on_upload, 'Agency uploads always come back to the Brand Manager.');
         Notification::assertSentTo($agencyUser, DocumentActionNotification::class, fn ($n) => $n->event === 'work_task_created');
 
-        $this->actingAs($agencyUser)->get(route('workflow.active', ['tab' => 'agency']))->assertOk()->assertSee('Liv.52 LBL');
+        $this->actingAs($agencyUser)->get(route('workflow.active', ['tab' => 'agency']))->assertRedirect(route('agency.index'));
+        $this->actingAs($agencyUser)->get(route('agency.index'))->assertOk()->assertSee('Liv.52 LBL');
         $this->actingAs($agencyUser)->post(route('work-tasks.complete', $task), ['file' => UploadedFile::fake()->create('v2.pdf', 10)])->assertRedirect();
 
         $this->assertSame('approved_with_changes_pending', $document->fresh()->status, 'Waits for the Brand Manager to confirm.');
@@ -309,9 +313,14 @@ class HimalayaUatRoundTwoTest extends TestCase
         ])->assertRedirect();
 
         $document->refresh();
-        $this->assertSame('approved_for_production', $document->status);
+        $this->assertSame('pending_closure', $document->status, 'Waits on the Brand Manager to close it.');
         $this->assertSame('chairperson-signed.pdf', $document->currentVersion->original_filename);
         $this->assertSame($document->current_version_id, $document->approvalActions()->first()->document_version_id);
+
+        $this->actingAs($cm)->post(route('documents.close', $document))->assertForbidden();
+        $this->actingAs($owner)->post(route('documents.close', $document))->assertRedirect();
+        $document->refresh();
+        $this->assertSame('approved_for_production', $document->status);
 
         // Released for distribution afterwards.
         $this->actingAs($owner)->post(route('documents.status.update', $document), ['status' => 'approved_for_distribution'])->assertRedirect();

@@ -7,9 +7,23 @@
         <div class="max-w-3xl mx-auto sm:px-6 lg:px-8">
             <div class="bg-white shadow-sm ring-1 ring-gray-900/5 rounded-lg p-6">
                 <form method="POST" action="{{ route('documents.store') }}" enctype="multipart/form-data" class="space-y-5"
+                      @submit="checkStakeholders($event)"
                       x-data="{
-                          projects: @js($projects->map(fn ($p) => ['id' => (string) $p->id, 'target_audience' => $p->target_audience])->values()),
-                          templates: @js($templates->map(fn ($t) => ['id' => (string) $t->id, 'target_audiences' => $t->target_audiences ?? []])->values()),
+                          projects: @js($projects->map(fn ($p) => ['id' => (string) $p->id, 'name' => $p->name, 'target_audience' => $p->target_audience])->values()),
+                          templates: @js($templates->map(fn ($t) => ['id' => (string) $t->id, 'name' => $t->name, 'team' => $t->team ?? 'pharma', 'target_audiences' => $t->target_audiences ?? []])->values()),
+                          brands: @js($brands->map(fn ($b) => ['id' => (string) $b->id, 'name' => $b->name, 'hint' => $b->code])->values()),
+                          // Pharma / Scientific Publications: each team its own workflows and fields.
+                          team: @js(old('team', $defaultTeam)),
+                          get teamTemplates() { return this.templates.filter(t => t.team === this.team); },
+                          get brandOptions() { return this.brands; },
+                          get projectOptions() { return this.projects; },
+                          setTeam(team) {
+                              if (this.team === team) return;
+                              this.team = team;
+                              if (! this.teamTemplates.some(t => t.id === this.workflowId)) { this.workflowId = ''; this.suggested = false; }
+                              this.resetEditor();
+                              if (this.teamTemplates.length === 1) this.workflowId = this.teamTemplates[0].id;
+                          },
                           rules: @js($workflowRules->map(fn ($r) => ['workflow_template_id' => (string) $r->workflow_template_id, 'brand_id' => $r->brand_id ? (string) $r->brand_id : null, 'document_type_id' => $r->document_type_id ? (string) $r->document_type_id : null, 'priority' => $r->priority])->values()),
                           // Per-stage candidate approvers, keyed by workflow_template_id, only
                           // for templates whose admin enabled owner customization. Drives the
@@ -23,8 +37,82 @@
                           documentTypeId: @js(old('document_type_id', '')),
                           channel: @js(old('channel', '')),
                           placeholder: @js((bool) old('is_placeholder', false)),
+                          creativeTeam: @js(old('creative_team', 'later')),
                           docTypes: @js($documentTypes->map(fn ($t) => ['id' => (string) $t->id, 'name' => $t->name, 'channel' => $t->channel])->values()),
                           defaultDueHours: @js($defaultDueHours),
+                          skus: @js($skus->map(fn ($k) => ['id' => (string) $k->id, 'brand_id' => (string) $k->brand_id, 'name' => $k->name . ($k->code ? ' (' . $k->code . ')' : '')])->values()),
+                          skuId: @js((string) old('sku_id', '')),
+                          get skuOptions() {
+                              return this.brandId ? this.skus.filter(k => k.brand_id === this.brandId) : [];
+                          },
+                          onBrandChange() {
+                              if (! this.skuOptions.some(k => k.id === this.skuId)) this.skuId = '';
+                              this.onBrandOrTypeChange();
+                          },
+                          // MOM 24 Nov: overall due date worked out from the stages in play
+                          // (stages with nobody ticked are skipped; parallel tracks overlap).
+                          dueTick: 0,
+                          get computedDue() {
+                              this.dueTick;
+                              const stages = this.templateApprovers[this.workflowId];
+                              if (! stages || ! this.$root) return null;
+                              const form = this.$root;
+                              const picked = id => form.querySelectorAll('input[name=\'stage_approvers[' + id + '][]\']:checked').length > 0;
+                              const anyPicks = stages.some(s => picked(s.stage_id));
+                              const hoursOf = s => {
+                                  const el = form.querySelector('input[name=\'stage_due_hours[' + s.stage_id + ']\']');
+                                  return parseInt(el?.value || s.due_hours || this.defaultDueHours, 10) || 0;
+                              };
+                              const columns = [];
+                              stages.forEach(s => {
+                                  if (anyPicks && ! picked(s.stage_id) && ! s.is_chairperson) return;
+                                  const key = s.parallel_group || ('solo-' + s.stage_id);
+                                  const col = columns.find(c => c.key === key);
+                                  col ? col.hours = Math.max(col.hours, hoursOf(s)) : columns.push({ key, hours: hoursOf(s) });
+                              });
+                              if (! columns.length) return null;
+                              const total = columns.reduce((t, c) => t + c.hours, 0);
+                              const due = new Date(Date.now() + total * 3600 * 1000);
+                              return due.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' IST';
+                          },
+                          // Chairperson: the brand's division approver (Zeal -> Rathna, Zandra -> Jalba).
+                          chairpersonByBrand: @js((object) $chairpersonByBrand),
+                          defaultIdsFor(stage) {
+                              if (stage.is_chairperson && this.brandId && this.chairpersonByBrand[this.brandId]) {
+                                  return [this.chairpersonByBrand[this.brandId]];
+                              }
+                              return stage.default_ids || [];
+                          },
+                          // Pharma: at least one R&D, Legal and Regulatory Affairs stakeholder.
+                          required: @js($requiredStakeholders),
+                          get requiredGroups() { return (this.required[this.team] || {}).groups || []; },
+                          get selectedIds() {
+                              this.dueTick;
+                              const stages = this.templateApprovers[this.workflowId] || [];
+                              if (this.editor.on) {
+                                  return this.editor.stages.filter(st => ! st.removed).flatMap(st => st.approverUserIds.map(String));
+                              }
+                              if (! this.$root) return [];
+                              const ticked = Array.from(this.$root.querySelectorAll('input[name^=\'stage_approvers[\']:checked')).map(el => String(el.value));
+                              // Nothing ticked anywhere: every stage goes to its usual people.
+                              return ticked.length ? ticked : stages.flatMap(s => s.candidates.map(c => String(c.id)));
+                          },
+                          get stakeholderStatus() {
+                              const req = this.required[this.team] || {};
+                              const covered = new Set();
+                              this.selectedIds.forEach(id => ((req.users || {})[id] || []).forEach(g => covered.add(g)));
+                              if (this.editor.on) {
+                                  this.editor.stages.filter(st => ! st.removed).forEach(st => (st.approverRoleIds || [])
+                                      .forEach(rid => ((req.roles || {})[rid] || []).forEach(g => covered.add(g))));
+                              }
+                              return this.requiredGroups.map(g => ({ group: g, ok: covered.has(g) }));
+                          },
+                          get missingStakeholders() { return this.stakeholderStatus.filter(s => ! s.ok).map(s => s.group); },
+                          checkStakeholders(e) {
+                              if (! this.canCustomise || ! this.missingStakeholders.length) return;
+                              e.preventDefault();
+                              this.$refs.stakeholderCheck?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          },
                           get typeOptions() {
                               return this.docTypes.filter(t => this.channel ? t.channel === this.channel : true);
                           },
@@ -51,7 +139,7 @@
                           onAudienceChange() {
                               this.suggested = false;
                               if (! this.workflowId) {
-                                  const match = this.templates.find(t => (t.target_audiences || []).includes(this.audience));
+                                  const match = this.teamTemplates.find(t => (t.target_audiences || []).includes(this.audience));
                                   if (match) { this.workflowId = match.id; this.suggested = true; }
                               }
                           },
@@ -61,8 +149,8 @@
                           // authoritatively on submit either way.
                           onBrandOrTypeChange() {
                               this.suggested = false;
-                              if (! this.brandId && ! this.documentTypeId) return;
-                              const matches = this.rules.filter(r =>
+                              if (this.team !== 'pharma' || (! this.brandId && ! this.documentTypeId)) return;
+                              const matches = this.rules.filter(r => this.teamTemplates.some(t => t.id === r.workflow_template_id) &&
                                   (r.brand_id === null || r.brand_id === this.brandId) &&
                                   (r.document_type_id === null || r.document_type_id === this.documentTypeId)
                               );
@@ -116,6 +204,23 @@
                       }">
                     @csrf
 
+                    {{-- Team: Pharma and Scientific Publications each have their own workflows and fields. --}}
+                    <div>
+                        <x-input-label value="Team" />
+                        <input type="hidden" name="team" :value="team">
+                        <div class="mt-1 grid grid-cols-1 sm:grid-cols-{{ count($teams) }} gap-2">
+                            @foreach ($teams as $teamKey => $teamCfg)
+                                <button type="button" @click="setTeam('{{ $teamKey }}')"
+                                        :class="team === '{{ $teamKey }}' ? 'border-brand-500 bg-brand-50 ring-1 ring-brand-500' : 'border-gray-200 hover:border-gray-300'"
+                                        class="text-left rounded-lg border px-3 py-2.5 transition">
+                                    <span class="block text-sm font-semibold text-gray-900">{{ $teamCfg['label'] }}</span>
+                                    <span class="block text-xs text-gray-500">{{ $teamCfg['description'] ?? '' }}</span>
+                                </button>
+                            @endforeach
+                        </div>
+                        <x-input-error :messages="$errors->get('team')" class="mt-2" />
+                    </div>
+
                     <div>
                         <x-input-label for="title" value="Title" />
                         <x-text-input id="title" name="title" class="mt-1 block w-full" :value="old('title')" required autofocus />
@@ -128,103 +233,124 @@
                         <x-input-error :messages="$errors->get('description')" class="mt-2" />
                     </div>
 
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <div>
-                            <x-input-label for="brand_id" value="Brand" />
-                            <select id="brand_id" name="brand_id" x-model="brandId" @change="onBrandOrTypeChange()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
-                                <option value="">— Not specified —</option>
-                                @foreach ($brands as $brand)
-                                    <option value="{{ $brand->id }}" @selected(old('brand_id') == $brand->id)>{{ $brand->name }}</option>
-                                @endforeach
-                            </select>
-                        </div>
-                        <div>
-                            <x-input-label for="channel" value="Collateral classification" />
-                            <select id="channel" name="channel" x-model="channel" @change="onChannelChange()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
-                                <option value="">— Select —</option>
-                                <option value="print">Print</option>
-                                <option value="digital">Digital</option>
-                            </select>
-                        </div>
-                        <div>
-                            <x-input-label for="document_type_id" value="Type of collateral" />
-                            <select id="document_type_id" name="document_type_id" x-model="documentTypeId" @change="onBrandOrTypeChange()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
-                                <option value="">— Not specified —</option>
-                                <template x-for="t in typeOptions" :key="t.id">
-                                    <option :value="t.id" x-text="t.name + (! channel && t.channel ? ' (' + (t.channel === 'print' ? 'Print' : 'Digital') + ')' : '')" :selected="t.id === documentTypeId"></option>
-                                </template>
-                            </select>
-                            <p class="mt-1 text-xs text-gray-500">LBL, LBC, Retailer Poster, VAF, Stockists Poster, In-/Out-Clinic Visibility, Dangler…</p>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <x-input-label for="category" value="Category" />
-                            <x-text-input id="category" name="category" class="mt-1 block w-full" :value="old('category')" placeholder="e.g. Promotional Material" />
-                        </div>
-                        <div>
-                            <x-input-label for="products" value="Product(s)" />
-                            <x-text-input id="products" name="products" class="mt-1 block w-full" :value="old('products')" placeholder="e.g. Immunobooster, Natevba" />
-                            <p class="mt-1 text-xs text-gray-500">Comma-separated if more than one.</p>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <x-input-label for="countries" value="Country / Countries" />
-                            <x-text-input id="countries" name="countries" class="mt-1 block w-full" :value="old('countries')" placeholder="e.g. US, EU, Global" />
-                            <p class="mt-1 text-xs text-gray-500">First country drives the reference number prefix.</p>
-                        </div>
-                        <div>
-                            <x-input-label for="target_audience" value="Target Audience" />
-                            <select id="target_audience" name="target_audience" x-model="audience" @change="onAudienceChange()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
-                                <option value="">— Not specified —</option>
-                                @foreach (\App\Support\TargetAudience::LABELS as $key => $label)
-                                    <option value="{{ $key }}" @selected(old('target_audience') === $key)>{{ $label }}</option>
-                                @endforeach
-                            </select>
-                            <p class="mt-1 text-xs text-gray-500">Who this content ultimately reaches — used to suggest a workflow and the right review depth.</p>
-                        </div>
-                    </div>
-
-                    <template x-if="audience && guidanceMap[audience]">
-                        <div class="rounded-md p-3 text-xs border flex items-start gap-2"
-                             :class="{
-                                 'bg-red-50 border-red-200 text-red-800': guidanceMap[audience].depth === 'high',
-                                 'bg-amber-50 border-amber-200 text-amber-800': guidanceMap[audience].depth === 'medium',
-                                 'bg-gray-50 border-gray-200 text-gray-600': guidanceMap[audience].depth === 'low',
-                             }">
-                            <span class="text-sm leading-none" x-text="guidanceMap[audience].depth === 'high' ? '⚠️' : (guidanceMap[audience].depth === 'medium' ? '◐' : 'ℹ️')"></span>
+                    {{-- ---------------- Pharma fields ---------------- --}}
+                    <div x-show="team === 'pharma'" class="space-y-5">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
-                                <p class="font-semibold" x-text="guidanceMap[audience].depth === 'high' ? 'Deep review required' : (guidanceMap[audience].depth === 'medium' ? 'Standard review' : 'Lightweight review')"></p>
-                                <p class="mt-0.5" x-text="guidanceMap[audience].message"></p>
+                                <x-input-label value="Brand" />
+                                <x-search-select class="mt-1" options="brandOptions" model="brandId" name="brand_id"
+                                                 on-change="brandId = id; onBrandChange()" placeholder="Search brand…" />
+                                <x-input-error :messages="$errors->get('brand_id')" class="mt-2" />
+                            </div>
+                            <div>
+                                <x-input-label value="SKU" />
+                                <x-search-select class="mt-1" options="skuOptions" model="skuId" name="sku_id" disabled="! brandId"
+                                                 placeholder="Search SKU…" />
+                                <p class="mt-1 text-xs text-gray-500" x-text="! brandId ? 'Select a brand first - only its SKUs are listed.' : (skuOptions.length ? skuOptions.length + ' SKU(s) for this brand.' : 'No SKUs for this brand yet - ask an admin to add them.')"></p>
+                                <x-input-error :messages="$errors->get('sku_id')" class="mt-2" />
                             </div>
                         </div>
-                    </template>
 
-                    <div class="grid grid-cols-2 gap-4">
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div>
+                                <x-input-label for="category" value="Category" />
+                                <select id="category" name="category" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
+                                    <option value="">— Select —</option>
+                                    @foreach ($categories as $category)
+                                        <option value="{{ $category }}" @selected(old('category') === $category)>{{ $category }}</option>
+                                    @endforeach
+                                </select>
+                                <x-input-error :messages="$errors->get('category')" class="mt-2" />
+                            </div>
+                            <div>
+                                <x-input-label for="channel" value="Collateral classification" />
+                                <select id="channel" name="channel" x-model="channel" @change="onChannelChange()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
+                                    <option value="">— Select —</option>
+                                    <option value="print">Print</option>
+                                    <option value="digital">Digital</option>
+                                </select>
+                            </div>
+                            <div>
+                                <x-input-label for="document_type_id" value="Type of collateral" />
+                                <select id="document_type_id" name="document_type_id" x-model="documentTypeId" @change="onBrandOrTypeChange()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
+                                    <option value="">— Not specified —</option>
+                                    <template x-for="t in typeOptions" :key="t.id">
+                                        <option :value="t.id" x-text="t.name + (! channel && t.channel ? ' (' + (t.channel === 'print' ? 'Print' : 'Digital') + ')' : '')" :selected="t.id === documentTypeId"></option>
+                                    </template>
+                                </select>
+                                <p class="mt-1 text-xs text-gray-500">LBL, LBC, Retailer Poster, VAF, Dangler…</p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <x-input-label value="Country" />
+                                <x-search-select class="mt-1" placeholder="Search country…">
+                                    <select name="country_id">
+                                        <option value="">— Select —</option>
+                                        @foreach ($countries as $country)
+                                            <option value="{{ $country->id }}" @selected(old('country_id') == $country->id)>{{ $country->name }}{{ $country->code ? ' (' . $country->code . ')' : '' }}</option>
+                                        @endforeach
+                                    </select>
+                                </x-search-select>
+                                <p class="mt-1 text-xs text-gray-500">Drives the reference number prefix.</p>
+                                <x-input-error :messages="$errors->get('country_id')" class="mt-2" />
+                            </div>
+                            <div>
+                                <x-input-label for="target_audience" value="Target Audience" />
+                                <select id="target_audience" name="target_audience" x-model="audience" @change="onAudienceChange()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
+                                    <option value="">— Not specified —</option>
+                                    @foreach (\App\Support\TargetAudience::LABELS as $key => $label)
+                                        <option value="{{ $key }}" @selected(old('target_audience') === $key)>{{ $label }}</option>
+                                    @endforeach
+                                </select>
+                                <p class="mt-1 text-xs text-gray-500">Who this content ultimately reaches — used to suggest a workflow and the right review depth.</p>
+                            </div>
+                        </div>
+
+                        <template x-if="audience && guidanceMap[audience]">
+                            <div class="rounded-md p-3 text-xs border flex items-start gap-2"
+                                 :class="{
+                                     'bg-red-50 border-red-200 text-red-800': guidanceMap[audience].depth === 'high',
+                                     'bg-amber-50 border-amber-200 text-amber-800': guidanceMap[audience].depth === 'medium',
+                                     'bg-gray-50 border-gray-200 text-gray-600': guidanceMap[audience].depth === 'low',
+                                 }">
+                                <span class="text-sm leading-none" x-text="guidanceMap[audience].depth === 'high' ? '⚠️' : (guidanceMap[audience].depth === 'medium' ? '◐' : 'ℹ️')"></span>
+                                <div>
+                                    <p class="font-semibold" x-text="guidanceMap[audience].depth === 'high' ? 'Deep review required' : (guidanceMap[audience].depth === 'medium' ? 'Standard review' : 'Lightweight review')"></p>
+                                    <p class="mt-0.5" x-text="guidanceMap[audience].message"></p>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
+                    {{-- ---------------- Scientific Publications fields ----------------
+                         The team's own fields are added here as they are agreed
+                         (config/promomats.php 'teams.publication.fields'). --}}
+                    <div x-show="team === 'publication'" x-cloak class="rounded-md border border-indigo-100 bg-indigo-50/40 p-3 text-xs text-indigo-900">
+                        Scientific Publications job — pick the publication below and one of the team's workflows. Brand, SKU and collateral fields don't apply.
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <x-input-label for="workflow_template_id" value="Approval Workflow" />
                             <select id="workflow_template_id" name="workflow_template_id" x-model="workflowId" @change="suggested = false; resetEditor()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
-                                <option value="">Auto-assign from Brand / Document Type…</option>
-                                @foreach ($templates as $template)
-                                    <option value="{{ $template->id }}" @selected(old('workflow_template_id') == $template->id)>{{ $template->name }}</option>
-                                @endforeach
+                                <option value="" x-text="team === 'pharma' ? 'Auto-assign from Brand / Document Type…' : '— Select a workflow —'"></option>
+                                <template x-for="t in teamTemplates" :key="t.id">
+                                    <option :value="t.id" x-text="t.name" :selected="t.id === workflowId"></option>
+                                </template>
                             </select>
                             <p class="mt-1 text-xs text-brand-600" x-show="suggested" x-cloak>Suggested based on Brand / Document Type / target audience — change if needed.</p>
-                            <p class="mt-1 text-xs text-gray-500" x-show="! workflowId" x-cloak>Leave blank to resolve automatically from Brand + Document Type on submit; if none matches, you'll be asked to pick one.</p>
+                            <p class="mt-1 text-xs text-gray-500" x-show="! workflowId && team === 'pharma'" x-cloak>Leave blank to resolve automatically from Brand + Document Type on submit; if none matches, you'll be asked to pick one.</p>
+                            <p class="mt-1 text-xs text-gray-500" x-show="! teamTemplates.length" x-cloak>No active workflow for this team yet — ask an admin.</p>
                             <x-input-error :messages="$errors->get('workflow_template_id')" class="mt-2" />
                         </div>
                         <div>
-                            <x-input-label for="project_id" value="Project (optional)" />
-                            <select id="project_id" name="project_id" x-model="projectId" @change="onProjectChange()" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
-                                <option value="">— No project —</option>
-                                @foreach ($projects as $project)
-                                    <option value="{{ $project->id }}" @selected(old('project_id') == $project->id)>{{ $project->name }}</option>
-                                @endforeach
-                            </select>
-                            <p class="mt-1 text-xs text-gray-500">Groups this document with others under the same initiative in the <a href="{{ route('projects.index') }}" class="text-brand-600 hover:underline">Projects</a> dashboard. Can be changed later.</p>
+                            <x-input-label x-text="team === 'publication' ? 'Publication' : 'Project (optional)'" value="Project (optional)" />
+                            <x-search-select class="mt-1" options="projectOptions" model="projectId" name="project_id"
+                                             on-change="projectId = id; onProjectChange()" placeholder="Search…" />
+                            <p class="mt-1 text-xs text-gray-500" x-text="team === 'publication' ? 'The publication this job belongs to.' : 'Groups this document with others under the same initiative. Can be changed later.'"></p>
+                            <x-input-error :messages="$errors->get('project_id')" class="mt-2" />
                         </div>
                     </div>
 
@@ -241,7 +367,7 @@
                                     <div class="flex items-start justify-between gap-3">
                                         <div>
                                             <p class="text-sm font-semibold text-gray-800">Stakeholders &amp; due dates for each stage</p>
-                                            <p class="text-xs text-gray-500 mt-0.5">Tick the person (or people) who should take each stage — e.g. Jalba or Rathna for Content Manager, the right TM/AGM, this brand's R&amp;D / Regulatory / Legal reviewers. Add anyone else if needed. Each stage gets {{ $defaultDueHours }} hours by default. You own this job, so you can't be picked as a reviewer.</p>
+                                            <p class="text-xs text-gray-500 mt-0.5">Tick the person (or people) who should take each stage — e.g. Jalba or Rathna for Content Manager, the right TM/AGM, this brand's R&amp;D / Regulatory Affairs / Legal reviewers. Add anyone else if needed. Stages you leave with nobody ticked are skipped and hidden from the approval matrix. Each stage gets {{ $defaultDueHours }} hours by default. You own this job, so you can't be picked as a reviewer.</p>
                                         </div>
                                         <button type="button" class="shrink-0 text-xs px-2.5 py-1 bg-white border border-brand-300 text-brand-700 rounded-md hover:bg-brand-50" @click="openEditor()">Edit stages…</button>
                                     </div>
@@ -252,11 +378,12 @@
                                                     <span x-text="stage.sequence_no + '. ' + stage.name"></span>
                                                     <span x-show="stage.parallel_group" class="ml-1 text-[10px] uppercase tracking-wide text-brand-600">parallel</span>
                                                     <span x-show="stage.is_draft" class="ml-1 text-[10px] uppercase tracking-wide text-violet-600">draft</span>
+                                                    <span x-show="stage.is_chairperson" class="ml-1 text-[10px] uppercase tracking-wide text-amber-600">auto-selected</span>
                                                 </span>
                                                 <label class="flex items-center gap-1.5 text-xs text-gray-500">
                                                     Due in
                                                     <input type="number" min="1" max="2160" :name="'stage_due_hours[' + stage.stage_id + ']'" :value="stage.due_hours || defaultDueHours"
-                                                           class="w-16 text-xs border-gray-300 rounded-md py-1">
+                                                           @input="dueTick++" class="w-16 text-xs border-gray-300 rounded-md py-1">
                                                     hours
                                                 </label>
                                             </div>
@@ -266,33 +393,34 @@
                                                         <input type="checkbox"
                                                                :name="'stage_approvers[' + stage.stage_id + '][]'"
                                                                :value="cand.id"
-                                                               :checked="stage.candidates.length === 1"
+                                                               :checked="stage.candidates.length === 1 || defaultIdsFor(stage).includes(cand.id)"
+                                                               @change="dueTick++"
                                                                class="rounded border-gray-300 text-brand-600">
                                                         <span x-text="cand.name"></span>
                                                     </label>
                                                 </template>
                                                 <template x-for="u in (stage.extra || [])" :key="'x' + u.id">
                                                     <label class="flex items-center gap-2 text-sm text-gray-700">
-                                                        <input type="checkbox" :name="'stage_approvers[' + stage.stage_id + '][]'" :value="u.id" checked class="rounded border-gray-300 text-brand-600">
+                                                        <input type="checkbox" :name="'stage_approvers[' + stage.stage_id + '][]'" :value="u.id" checked @change="dueTick++" class="rounded border-gray-300 text-brand-600">
                                                         <span x-text="u.name"></span>
                                                         <span class="text-[10px] uppercase tracking-wide text-emerald-600">added</span>
                                                     </label>
                                                 </template>
                                             </div>
                                             <div class="mt-2 flex items-center gap-2">
-                                                <select @change="addExtra(stage, $event.target.value); $event.target.value = ''" class="text-xs border-gray-300 rounded-md py-1 max-w-xs">
-                                                    <option value="">+ Add someone else…</option>
-                                                    <template x-for="u in allUsers" :key="u.id">
-                                                        <option :value="u.id" x-text="u.name"></option>
-                                                    </template>
-                                                </select>
+                                                <x-search-select size="sm" class="w-64 max-w-full shrink-0" options="allUsers" clear-on-pick
+                                                                 on-pick="addExtra(stage, id); dueTick++" placeholder="+ Add someone else (search)…" />
                                                 <span class="text-[11px] text-gray-400" x-text="stage.parallel_group
-                                                    ? 'MLR stakeholders run in parallel. Only the tracks you tick someone for are sent — tracks left unticked are skipped (leave every MLR track unticked to send to all reviewers).'
-                                                    : 'Leave everyone unticked to send it to all of them (first to act decides).'"></span>
+                                                    ? 'MLR stakeholders run in parallel. Only the tracks you tick someone for are sent.'
+                                                    : (stage.is_chairperson ? 'The Chairperson approver is selected automatically — change it if needed.' : 'Nobody ticked: this stage is skipped and hidden from the approval matrix.')"></span>
                                             </div>
                                         </div>
                                     </template>
                                     <x-input-error :messages="$errors->get('stage_approvers')" class="mt-1" />
+                                    <div class="flex items-center justify-between rounded-md bg-white border border-gray-200 px-3 py-2 text-sm" x-init="$nextTick(() => dueTick++)">
+                                        <span class="text-gray-600">Overall due date <span class="text-xs text-gray-400">(worked out from the stages selected)</span></span>
+                                        <span class="font-medium text-gray-900" x-text="computedDue || '—'"></span>
+                                    </div>
                                 </div>
                             </template>
 
@@ -363,11 +491,16 @@
                                                         </div>
                                                         <div>
                                                             <p class="text-xs text-gray-500 mb-1">…and / or specific people</p>
-                                                            <select multiple x-model="st.approverUserIds" class="w-full text-xs border-gray-300 rounded-md h-24">
-                                                                <template x-for="u in allUsers" :key="u.id">
-                                                                    <option :value="String(u.id)" x-text="u.name"></option>
+                                                            <div class="flex flex-wrap gap-1 mb-1" x-show="st.approverUserIds.length">
+                                                                <template x-for="uid in st.approverUserIds" :key="uid">
+                                                                    <span class="inline-flex items-center gap-1 text-xs bg-brand-50 text-brand-800 rounded-full pl-2 pr-1 py-0.5">
+                                                                        <span x-text="(allUsers.find(u => String(u.id) === String(uid)) || {}).name"></span>
+                                                                        <button type="button" class="text-brand-500 hover:text-brand-800" @click="st.approverUserIds = st.approverUserIds.filter(x => x !== uid)">&times;</button>
+                                                                    </span>
                                                                 </template>
-                                                            </select>
+                                                            </div>
+                                                            <x-search-select size="sm" options="allUsers.filter(u => ! st.approverUserIds.includes(String(u.id)))" clear-on-pick
+                                                                             on-pick="st.approverUserIds.push(String(id))" placeholder="Search people to add…" />
                                                         </div>
                                                     </div>
                                                 </template>
@@ -380,15 +513,30 @@
                                 </div>
                             </template>
 
+                            {{-- Pharma: R&D, Legal and Regulatory Affairs must each have someone. --}}
+                            <div x-show="requiredGroups.length" x-ref="stakeholderCheck"
+                                 :class="missingStakeholders.length ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'"
+                                 class="rounded-md border px-3 py-2 text-sm">
+                                <p class="font-medium" :class="missingStakeholders.length ? 'text-red-700' : 'text-emerald-700'"
+                                   x-text="missingStakeholders.length
+                                       ? 'Select at least one stakeholder from each of: ' + requiredGroups.join(', ')
+                                       : 'Required stakeholders selected'"></p>
+                                <div class="mt-1 flex flex-wrap gap-3 text-xs">
+                                    <template x-for="s in stakeholderStatus" :key="s.group">
+                                        <span :class="s.ok ? 'text-emerald-700' : 'text-red-600'" x-text="(s.ok ? '✓ ' : '✗ ') + s.group"></span>
+                                    </template>
+                                </div>
+                            </div>
+
                             <input type="hidden" name="workflow_edit" :value="workflowEditJson">
                         </div>
                     </template>
 
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
                         <div>
-                            <x-input-label for="due_date" value="Task due date" />
-                            <x-text-input type="date" id="due_date" name="due_date" class="mt-1 block w-full" :value="old('due_date')" />
-                            <p class="mt-1 text-[11px] text-gray-500">Can be after the expiry date.</p>
+                            <x-input-label value="Task due date" />
+                            <p class="mt-2 text-sm text-gray-700" x-text="computedDue || 'Worked out from the stages'"></p>
+                            <p class="mt-1 text-[11px] text-gray-500">Automatic. Change any stage's due date/time on the job page.</p>
                         </div>
                         <div>
                             <x-input-label for="start_date" value="Start Date" />
@@ -416,12 +564,37 @@
                         <div x-show="placeholder" x-cloak class="space-y-3">
                             <div>
                                 <x-input-label for="creative_team" value="Who prepares the creative?" />
-                                <select id="creative_team" name="creative_team" class="mt-1 block w-full text-sm border-gray-300 rounded-md">
+                                <select id="creative_team" name="creative_team" x-model="creativeTeam" class="mt-1 block w-full text-sm border-gray-300 rounded-md">
                                     <option value="later" @selected(old('creative_team', 'later') === 'later')>Decide later — I'll upload the Word draft for Content Manager alignment first</option>
                                     <option value="agency" @selected(old('creative_team') === 'agency')>Send the brief to the Content Agency now</option>
                                     <option value="design" @selected(old('creative_team') === 'design')>Send the brief to the Internal Design Team now</option>
                                 </select>
                             </div>
+                            @if (($agencies ?? collect())->isNotEmpty())
+                                <div x-data="{ agencyId: @js((string) old('content_agency_id', '')) }" x-show="creativeTeam === 'agency'" x-cloak class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <x-input-label for="content_agency_id" value="Content agency" />
+                                        <select id="content_agency_id" name="content_agency_id" x-model="agencyId" class="mt-1 block w-full text-sm border-gray-300 rounded-md">
+                                            <option value="">— Select agency —</option>
+                                            @foreach ($agencies as $agency)
+                                                <option value="{{ $agency->id }}">{{ $agency->name }}</option>
+                                            @endforeach
+                                        </select>
+                                        <x-input-error :messages="$errors->get('content_agency_id')" class="mt-1" />
+                                    </div>
+                                    <div>
+                                        <x-input-label for="creative_assign_to" value="Person at the agency" />
+                                        <select id="creative_assign_to" name="creative_assign_to" class="mt-1 block w-full text-sm border-gray-300 rounded-md">
+                                            <option value="">Whole agency</option>
+                                            @foreach ($agencies as $agency)
+                                                @foreach ($agency->users as $member)
+                                                    <option value="{{ $member->id }}" x-show="agencyId === '{{ $agency->id }}'">{{ $member->name }}</option>
+                                                @endforeach
+                                            @endforeach
+                                        </select>
+                                    </div>
+                                </div>
+                            @endif
                             <div>
                                 <x-input-label for="design_instructions" value="Brief" />
                                 <textarea id="design_instructions" name="design_instructions" rows="3" class="mt-1 block w-full text-sm border-gray-300 rounded-md" placeholder="Sizes, key message, claims to use, reference files…">{{ old('design_instructions') }}</textarea>

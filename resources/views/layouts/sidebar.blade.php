@@ -10,6 +10,14 @@
     if (auth()->user()->can('viewReports', \App\Models\Document::class)) {
         $navItems[] = ['route' => 'reports.index', 'pattern' => 'reports.*', 'label' => 'Reports', 'icon' => 'chart'];
     }
+
+    // Content Agency logins work only in their own workspace (MOM 24 Nov).
+    $isAgencyLogin = auth()->user()->isAgencyUser();
+    if ($isAgencyLogin) {
+        $navItems = [
+            ['route' => 'agency.index', 'pattern' => ['agency.*', 'documents.*'], 'label' => 'My agency jobs', 'icon' => 'folder', 'badge' => auth()->user()->openWorkTasksQuery()->count()],
+        ];
+    }
 @endphp
 @php
     $icons = [
@@ -86,6 +94,7 @@
                 </svg>
                 <span>Helpdesk</span>
             </a>
+            @unless ($isAgencyLogin)
             <a href="{{ route('help.index') }}"
                class="group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors {{ request()->routeIs('help.*') ? 'bg-white/10 text-white' : 'text-teal-100/70 hover:bg-white/5 hover:text-white' }}">
                 <svg class="w-[18px] h-[18px] shrink-0 {{ request()->routeIs('help.*') ? 'text-accent-400' : 'text-teal-100/50 group-hover:text-teal-100' }}" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
@@ -93,6 +102,7 @@
                 </svg>
                 <span>Help &amp; Demo Guide</span>
             </a>
+            @endunless
         </div>
 
         <div class="px-3 py-3 border-t border-white/10">

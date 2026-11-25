@@ -215,6 +215,13 @@ class MobileController extends Controller
                 'has_file' => $document->currentVersion !== null,
                 'can_assign_placeholder' => $document->is_placeholder && ! $openWork,
             ] : null,
+            // MOM 24 Nov: after the Chairperson the Brand Manager gives the final approval and closes.
+            'closure_panel' => $document->status === 'pending_closure' && $user->can('close', $document) ? [
+                'chairperson_decision' => $lastDecision?->decision,
+                'comments' => $lastDecision?->comments,
+                'can_upload_new_version' => $lastDecision?->decision === 'approved_with_changes',
+            ] : null,
+            'overall_due_date' => $document->due_date?->toDateString(),
             'owner_panel' => ($isOwner || $canManage) && ($isParked || $isDraftAligned) ? [
                 'mode' => $isDraftAligned ? 'draft_aligned' : 'revise',
                 'last_decision' => $lastDecision ? [
@@ -239,7 +246,7 @@ class MobileController extends Controller
             ] : null,
             'lifecycle' => ($isOwner || $isAdmin) && ! $document->legal_hold
                 && in_array($document->status, ['approved', 'approved_for_production', 'approved_for_distribution', 'pending_expiration'], true)
-                ? collect($document->status === 'approved_for_production' ? ['approved_for_distribution' => 'Release for Distribution'] : [])
+                ? collect($document->status === 'approved_for_production' ? ['approved_for_distribution' => 'Submit for Distribution'] : [])
                     ->merge(['superseded' => 'Mark Superseded', 'obsolete' => 'Mark Obsolete', 'archived' => 'Archive'])
                     ->map(fn ($label, $status) => ['status' => $status, 'label' => $label])->values()
                 : [],
@@ -280,13 +287,16 @@ class MobileController extends Controller
         $runs = $instance?->stageRuns->keyBy('workflow_stage_id') ?? collect();
         $openSeqs = $stages->filter(fn ($s) => ($runs[$s->id]->status ?? null) === 'open')->pluck('sequence_no');
         $assignedStageIds = $instance ? $instance->assignees()->pluck('workflow_stage_id')->unique() : collect();
-        $fullyApproved = in_array($document->status, ['approved', 'approved_for_production', 'approved_for_distribution'], true);
+        $fullyApproved = in_array($document->status, ['approved', 'approved_for_production', 'approved_for_distribution', 'pending_closure'], true);
         $lastActionSeq = $document->approvalActions->first()?->stage?->sequence_no;
         $currentSeq = $instance?->currentStage?->sequence_no;
+        // Same approval matrix as the web: stages nobody was selected for are skipped.
+        $schedule = app(\App\Services\Workflow\StageSchedule::class)->for($document)->keyBy(fn ($r) => $r['stage']->id);
 
-        return $stages->map(function ($s) use ($document, $instance, $runs, $openSeqs, $assignedStageIds, $fullyApproved, $lastActionSeq, $currentSeq, $isParked) {
+        return $stages->map(function ($s) use ($document, $instance, $runs, $openSeqs, $assignedStageIds, $fullyApproved, $lastActionSeq, $currentSeq, $isParked, $schedule) {
             $run = $runs[$s->id] ?? null;
             $state = match (true) {
+                ($schedule[$s->id]['state'] ?? null) === 'skipped' => 'skipped',
                 $fullyApproved => 'done',
                 $document->status === 'rejected' => $lastActionSeq && $s->sequence_no <= $lastActionSeq ? 'rejected' : 'upcoming',
                 $run?->status === 'resolved' && ! $assignedStageIds->contains($s->id) => 'skipped',
@@ -302,6 +312,8 @@ class MobileController extends Controller
                 'parallel_group' => $s->parallel_group,
                 'stage_type' => $s->stage_type ?? 'review',
                 'state' => $state,
+                'due_at' => in_array($state, ['current', 'upcoming'], true) ? ($schedule[$s->id]['due_at'] ?? null)?->toIso8601String() : null,
+                'stage_id' => $s->id,
                 'with' => $instance?->pendingAssignees->where('workflow_stage_id', $s->id)->pluck('user.name')->values() ?? [],
             ];
         })->values()->all();

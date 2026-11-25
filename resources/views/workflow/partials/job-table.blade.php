@@ -46,6 +46,8 @@
                                 <span class="text-amber-700">Brand Manager — revision needed</span>
                             @elseif ($doc->status === 'draft_aligned')
                                 <span class="text-amber-700">Brand Manager — draft aligned, assign creative / start review</span>
+                            @elseif ($doc->status === 'pending_closure')
+                                <span class="text-emerald-700">Brand Manager — final approval &amp; closure</span>
                             @elseif ($doc->status === 'draft')
                                 <span class="text-gray-500">Brand Manager — not yet submitted</span>
                             @else

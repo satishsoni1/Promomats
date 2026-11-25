@@ -36,7 +36,8 @@
     $myStageIsDraft = $myAssignment?->stage?->isDraft();
     $myStageIsOffline = $myAssignment?->stage?->isOffline();
     $myStageIsFinal = $myAssignment && ! $myAssignment->stage->nextStage();
-    $commentsLocked = $document->commentsLockedFor($user);
+    // Agency logins read the comments but don't take part in the review.
+    $commentsLocked = $document->commentsLockedFor($user) || $user->isAgencyUser();
     $commentsAreDraft = $document->commentsStartAsDraftFor($user);
     $firstStageIsDraft = (bool) $document->workflowTemplate?->stages->first()?->isDraft();
     // A file uploaded since the job came back (e.g. by the Content Agency) for the Brand Manager to confirm.
@@ -52,8 +53,23 @@
     $lastDecision = $document->approvalActions->first();
     // "Approved for Production" comes only from the Chairperson sign-off; once
     // produced, the owner can release it for distribution.
-    $lifecycleActions = ($document->status === 'approved_for_production' ? ['approved_for_distribution' => 'Release for Distribution'] : [])
+    $lifecycleActions = ($document->status === 'approved_for_production' ? ['approved_for_distribution' => 'Submit for Distribution'] : [])
         + ['superseded' => 'Mark Superseded', 'obsolete' => 'Mark Obsolete', 'archived' => 'Archive'];
+
+    // MOM 24 Nov.
+    // External agency logins see the job and its comments, never the workflow.
+    $isAgencyUser = $user->isAgencyUser();
+    // Stages nobody was selected for are hidden from the approval matrix.
+    $hiddenStageIds = $stageSchedule->where('state', 'skipped')->map(fn ($r) => $r['stage']->id)->values();
+    $hiddenStageNames = $stageSchedule->where('state', 'skipped')->map(fn ($r) => $r['stage']->name)->values();
+    $scheduleUserNames = \App\Models\User::whereIn('id', $stageSchedule->flatMap(fn ($r) => $r['assignee_ids'])->unique())->pluck('name', 'id');
+    // Chairperson signed off: waiting on the Brand Manager's final approval & closure.
+    $isPendingClosure = $document->status === 'pending_closure';
+    $closureDecision = $isPendingClosure ? $document->approvalActions->first() : null;
+    $agencies = $canManageTasks
+        ? \App\Models\ContentAgency::active()->orderBy('name')->with(['users' => fn ($q) => $q->where('is_active', true)->orderBy('name')])->get()
+        : collect();
+    $commentCount = $commentsByVersion->sum(fn ($g) => $g['comments']->count() + $g['comments']->sum(fn ($c) => $c->replies->count()) + count($g['word_comments']));
 @endphp
 <x-app-layout>
     <x-slot name="header">
@@ -62,7 +78,7 @@
                 <h2 class="font-semibold text-xl text-gray-800 leading-tight truncate">{{ $document->title }}</h2>
                 <div class="flex flex-wrap items-center gap-1.5 mt-0.5">
                     <p class="text-xs text-gray-500 font-mono">{{ $document->reference_no }}</p>
-                    @if ($document->products || $document->countries)
+                    @if (! $isAgencyUser && ($document->products || $document->countries))
                         <span class="text-gray-300">&middot;</span>
                         @foreach ($document->products ?? [] as $p)<span class="inline-block px-1.5 py-0.5 bg-gray-100 rounded text-[11px] text-gray-600">{{ $p }}</span>@endforeach
                         @foreach ($document->countries ?? [] as $c)<span class="inline-block px-1.5 py-0.5 bg-gray-100 rounded text-[11px] text-gray-600">{{ $c }}</span>@endforeach
@@ -70,10 +86,12 @@
                 </div>
             </div>
             <div class="flex items-center gap-2 shrink-0">
+                @unless ($isAgencyUser)
                 <form method="POST" action="{{ route('basket.add', $document) }}">
                     @csrf
                     <button class="text-xs text-gray-500 hover:text-brand-600 border border-gray-200 rounded-lg px-2.5 py-1.5 hover:border-brand-200 transition">+ Basket</button>
                 </form>
+                @endunless
                 <x-status-badge :status="$document->status" class="!text-xs !px-3 !py-1.5">{{ $document->statusLabel() }}</x-status-badge>
             </div>
         </div>
@@ -127,10 +145,10 @@
                 </div>
             @endif
 
-            @if ($stages->isNotEmpty())
+            @if ($stages->isNotEmpty() && ! $isAgencyUser)
                 <div class="{{ $cardClass }} !p-4 overflow-x-auto">
                     <div class="flex items-center min-w-max">
-                        @php $stageColumns = $stages->groupBy(fn ($s) => $s->parallel_group ?: 'solo-' . $s->id); @endphp
+                        @php $stageColumns = $stages->reject(fn ($s) => $hiddenStageIds->contains($s->id))->groupBy(fn ($s) => $s->parallel_group ?: 'solo-' . $s->id); @endphp
                         @foreach ($stageColumns as $column)
                             <div class="flex items-center {{ ! $loop->last ? 'flex-1' : '' }}">
                             <div class="flex flex-col gap-1.5 px-2 {{ $column->count() > 1 ? 'border border-dashed border-brand-200 rounded-lg py-1.5' : '' }}">
@@ -140,7 +158,7 @@
                             @foreach ($column as $stage)
                             @php
                                 $state = 'upcoming';
-                                if ($isFullyApproved) {
+                                if ($isFullyApproved || $isPendingClosure) {
                                     $state = 'done';
                                 } elseif ($isRejected) {
                                     $state = $lastActionSeq && $stage->sequence_no <= $lastActionSeq ? 'rejected' : 'upcoming';
@@ -187,10 +205,20 @@
                             </div>
                         @endforeach
                     </div>
+                    @if ($hiddenStageNames->isNotEmpty())
+                        <p class="mt-2 text-[11px] text-gray-400" title="Skipped - no stakeholder selected">Not in this job's approval matrix (no stakeholder selected): {{ $hiddenStageNames->join(', ') }}</p>
+                    @endif
                 </div>
             @endif
 
-            @if ($document->is_placeholder)
+            @if ($isAgencyUser)
+                {{-- Agency logins don't see the workflow status banners. --}}
+            @elseif ($isPendingClosure)
+                <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                    <strong>{{ $closureDecision?->decision === 'approved_with_changes' ? 'Chairperson approved with changes' : 'Chairperson approved' }}{{ $closureDecision ? ' — ' . $closureDecision->acted_at?->diffForHumans() : '' }}.</strong>
+                    Waiting on {{ $document->owner?->name }} (Brand Manager) for the final approval and closure{{ $closureDecision?->decision === 'approved_with_changes' ? ' — a new version can be uploaded first' : '' }}. It becomes Approved for Production once closed.
+                </div>
+            @elseif ($document->is_placeholder)
                 <div class="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900">
                     <strong>Placeholder</strong> — waiting for the artwork.
                     @if ($openWorkTask)
@@ -213,7 +241,7 @@
                     <strong>Waiting on {{ $openWorkTask ? 'the ' . $openWorkTask->teamLabel() . ($openWorkTask->assignee ? ' (' . $openWorkTask->assignee->name . ')' : '') : $document->owner?->name . ' (Brand Manager)' }}</strong>
                     to upload the revision{{ $lastDecision ? ' — ' . $lastDecision->decisionLabel() . ' by ' . $lastDecision->actor?->name . ' at ' . $lastDecision->stage?->name . ', ' . $lastDecision->acted_at?->diffForHumans() : '' }}.
                     @if ($lastDecision?->decision === 'not_approved')
-                        Once resubmitted it goes straight back to {{ $lastDecision->stage?->name }}.
+                        Once resubmitted it goes back to {{ $instance?->resumeAtStage?->name ?? $lastDecision->stage?->name }}{{ $instance?->resumeAtStage && $instance->resumeAtStage->id !== $lastDecision->stage?->id ? ' and through every stage after it again' : '' }}.
                     @elseif ($lastDecision?->decision === 'approved_with_changes' && ! $lastDecision->stage?->isDraft() && ($document->workflowTemplate?->awc_resume ?? 'next_stage') === 'next_stage')
                         Once it's uploaded the workflow completes.
                     @endif
@@ -222,7 +250,7 @@
 
             @if ($commentsLocked)
                 <div class="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
-                    🔒 You've submitted your review, so this job is locked for you while it is with other stakeholders — you can view it but not add or edit comments.
+                    🔒 Your stage has given its decision, so you can no longer add or edit comments on this job — you can still view it. It unlocks only if the job comes back to you with a new task.
                 </div>
             @elseif ($commentsAreDraft)
                 <div class="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
@@ -263,19 +291,35 @@
                                 </dd>
                             </div>
                             <div>
+                                <dt class="text-xs text-gray-400 mb-0.5">Team</dt>
+                                <dd class="text-gray-900">{{ $document->teamLabel() }}</dd>
+                            </div>
+                            @if (\App\Support\Teams::hasField($document->team, 'channel'))
+                            <div>
                                 <dt class="text-xs text-gray-400 mb-0.5">Collateral</dt>
                                 <dd class="text-gray-900">
                                     {{ collect([$document->channelLabel(), $document->documentType?->name])->filter()->join(' · ') ?: '—' }}
                                 </dd>
                             </div>
+                            @endif
                             <div>
                                 <dt class="text-xs text-gray-400 mb-0.5">Task due date</dt>
                                 <dd class="text-gray-900 {{ $document->due_date?->isPast() && ! in_array($document->status, \App\Models\Document::LIBRARY_STATUSES) ? 'text-red-600' : '' }}">{{ $document->due_date?->format('d M Y') ?? '—' }}</dd>
                             </div>
+                            @if (\App\Support\Teams::hasField($document->team, 'brand'))
                             <div>
                                 <dt class="text-xs text-gray-400 mb-0.5">Category</dt>
                                 <dd class="text-gray-900">{{ $document->category ?? '—' }}</dd>
                             </div>
+                            <div>
+                                <dt class="text-xs text-gray-400 mb-0.5">Brand / SKU</dt>
+                                <dd class="text-gray-900">{{ collect([$document->brand?->name, $document->sku?->name ?? collect($document->products)->join(', ')])->filter()->join(' · ') ?: '—' }}</dd>
+                            </div>
+                            <div>
+                                <dt class="text-xs text-gray-400 mb-0.5">Country</dt>
+                                <dd class="text-gray-900">{{ $document->country?->name ?? (collect($document->countries)->join(', ') ?: '—') }}</dd>
+                            </div>
+                            @endif
                             <div>
                                 <dt class="text-xs text-gray-400 mb-0.5">Target Audience</dt>
                                 <dd class="text-gray-900">
@@ -295,6 +339,7 @@
                                     @endif
                                 </dd>
                             </div>
+                            @unless ($isAgencyUser)
                             <div>
                                 <dt class="text-xs text-gray-400 mb-0.5">Workflow</dt>
                                 <dd class="text-gray-900">
@@ -306,6 +351,7 @@
                                     @endif
                                 </dd>
                             </div>
+                            @endunless
                             @if ($isOwner || auth()->user()->can('access-admin'))
                                 <div>
                                     <dt class="text-xs text-gray-400 mb-0.5">Editing access</dt>
@@ -400,14 +446,14 @@
                                 @if ($document->legal_hold)
                                     <span class="text-xs text-[#8f2323]" title="Content is frozen while this document is under legal hold">⚖️ Locked (Legal Hold)</span>
                                 @else
-                                    @if ($canUploadVersion)
+                                    @if ($canUploadVersion && ! $isAgencyUser)
                                         <button type="button" onclick="document.getElementById('upload-version-form').classList.toggle('hidden')" class="text-sm text-brand-600 hover:underline">+ Upload new version</button>
                                     @endif
                                 @endif
                             </div>
                         </div>
 
-                        @if ($canUploadVersion)
+                        @if ($canUploadVersion && ! $isAgencyUser)
                             <form id="upload-version-form" method="POST" action="{{ route('documents.versions.store', $document) }}" enctype="multipart/form-data" class="hidden mb-4 p-4 bg-gray-50 rounded-lg space-y-3">
                                 @csrf
                                 @if ($document->status === 'in_review')
@@ -509,7 +555,9 @@
                         <div class="flex items-center justify-between mb-1">
                             <h3 class="text-base font-semibold text-gray-900">Reference Attachments ({{ $document->referenceAttachments->count() }})</h3>
                             <div class="flex items-center gap-3">
+                                @unless ($isAgencyUser)
                                 <a href="{{ route('library.folders.index', ['document' => $document->id]) }}" class="text-sm text-brand-600 hover:underline">📚 Browse Library</a>
+                                @endunless
                                 @if ($isOwner)
                                     <button type="button" onclick="document.getElementById('upload-reference-form').classList.toggle('hidden')" class="text-sm text-brand-600 hover:underline">+ Attach reference file</button>
                                 @endif
@@ -615,6 +663,9 @@
 
                 <!-- Right: actions, workflow status, activity, AI tools, metadata -->
                 <div class="space-y-6">
+                    @if ($isAgencyUser)
+                        @include('documents.partials.agency-action-bar')
+                    @else
 
                     @if ($isPendingApprover && (! $user->canRecordDecisions() || $isOwner))
                         <div class="bg-white rounded-xl border border-gray-200 p-6 text-sm text-gray-600">
@@ -692,6 +743,32 @@
                         </div>
                     @endif
 
+                    @if ($isPendingClosure && $user->can('close', $document))
+                        <div class="bg-white rounded-xl border-2 border-emerald-200 p-6">
+                            <h3 class="text-base font-semibold text-gray-900 mb-1">Final approval &amp; closure</h3>
+                            <p class="text-xs text-gray-500 mb-3">
+                                @if ($closureDecision?->decision === 'approved_with_changes')
+                                    The Chairperson approved with changes. Upload the corrected version if needed, then close the job — only you, as Brand Manager, can close it.
+                                @else
+                                    The Chairperson approved it. Give your final approval to close the job.
+                                @endif
+                                It then becomes <strong>Approved for Production</strong>, and you submit it for distribution.
+                            </p>
+                            @if ($closureDecision?->comments)
+                                <p class="text-xs text-gray-600 bg-emerald-50 rounded-md p-2 mb-3"><strong>{{ $closureDecision->actor?->name }}:</strong> {{ $closureDecision->comments }}</p>
+                            @endif
+                            <form method="POST" action="{{ route('documents.close', $document) }}" enctype="multipart/form-data" class="space-y-3">
+                                @csrf
+                                @if ($closureDecision?->decision === 'approved_with_changes')
+                                    <x-file-dropzone name="file" hint="New version with the Chairperson's changes (optional)." />
+                                    <input type="text" name="change_notes" placeholder="What changed? (optional)" class="block w-full text-sm border-gray-300 rounded-lg">
+                                @endif
+                                <x-input-error :messages="$errors->get('closure')" class="mt-1" />
+                                <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5" onclick="return confirm('Give the final approval and close this job?')">Approve &amp; close</x-primary-button>
+                            </form>
+                        </div>
+                    @endif
+
                     @if ($isOwner && $document->status === 'draft')
                         <div class="bg-white rounded-xl border-2 border-brand-200 p-6">
                             <h3 class="text-base font-semibold text-gray-900 mb-1">{{ $firstStageIsDraft ? 'Send for draft alignment' : 'Assign to stakeholders' }}</h3>
@@ -757,6 +834,30 @@
                                                 <label class="text-xs text-gray-500">Due date</label>
                                                 <input type="date" name="due_date" min="{{ now()->toDateString() }}" value="{{ now()->addHours(config('promomats.due_dates.default_stage_hours', 48))->toDateString() }}" class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
                                             </div>
+                                            @if ($team === 'agency' && $agencies->isNotEmpty())
+                                                <div x-data="{ agencyId: '{{ $agencies->count() === 1 ? $agencies->first()->id : '' }}' }" class="contents">
+                                                    <div>
+                                                        <label class="text-xs text-gray-500">Content agency</label>
+                                                        <select name="content_agency_id" x-model="agencyId" required class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
+                                                            <option value="">Select…</option>
+                                                            @foreach ($agencies as $agency)
+                                                                <option value="{{ $agency->id }}">{{ $agency->name }}</option>
+                                                            @endforeach
+                                                        </select>
+                                                    </div>
+                                                    <div class="col-span-2">
+                                                        <label class="text-xs text-gray-500">Person at the agency</label>
+                                                        <select name="assign_to" class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
+                                                            <option value="">Anyone at the agency</option>
+                                                            @foreach ($agencies as $agency)
+                                                                @foreach ($agency->users as $member)
+                                                                    <option value="{{ $member->id }}" x-show="agencyId === '{{ $agency->id }}'">{{ $member->name }}</option>
+                                                                @endforeach
+                                                            @endforeach
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            @else
                                             <div>
                                                 <label class="text-xs text-gray-500">Person (optional)</label>
                                                 <select name="assign_to" class="mt-0.5 block w-full text-sm border-gray-300 rounded-lg">
@@ -766,7 +867,9 @@
                                                     @endforeach
                                                 </select>
                                             </div>
+                                            @endif
                                         </div>
+                                        <x-input-error :messages="$errors->get('content_agency_id')" class="mt-1" />
                                         @if ($team === 'design' && $isParked)
                                             <label class="flex items-center gap-2 text-xs text-gray-600">
                                                 <input type="hidden" name="resubmit_on_upload" value="0">
@@ -776,7 +879,7 @@
                                         @else
                                             <p class="text-[11px] text-gray-400">Their upload comes back to you to confirm before it goes for review.</p>
                                         @endif
-                                        @if ($teamMembers[$team]->isEmpty())
+                                        @if ($teamMembers[$team]->isEmpty() && ! ($team === 'agency' && $agencies->isNotEmpty()))
                                             <p class="text-[11px] text-amber-700">No one has the {{ $teamName }} role yet — ask an admin to assign it.</p>
                                         @endif
                                         <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">Send to {{ $teamName }}</x-primary-button>
@@ -797,6 +900,24 @@
                                     <option value="agency">Content Agency</option>
                                     <option value="design">Internal Design Team</option>
                                 </select>
+                                @if ($agencies->isNotEmpty())
+                                    <div x-show="team === 'agency'" x-data="{ agencyId: '{{ $agencies->count() === 1 ? $agencies->first()->id : '' }}' }" class="grid grid-cols-2 gap-2">
+                                        <select name="content_agency_id" x-model="agencyId" :required="team === 'agency'" :disabled="team !== 'agency'" class="block w-full text-sm border-gray-300 rounded-lg">
+                                            <option value="">Content agency…</option>
+                                            @foreach ($agencies as $agency)
+                                                <option value="{{ $agency->id }}">{{ $agency->name }}</option>
+                                            @endforeach
+                                        </select>
+                                        <select name="assign_to" :disabled="team !== 'agency'" class="block w-full text-sm border-gray-300 rounded-lg">
+                                            <option value="">Anyone at the agency</option>
+                                            @foreach ($agencies as $agency)
+                                                @foreach ($agency->users as $member)
+                                                    <option value="{{ $member->id }}" x-show="agencyId === '{{ $agency->id }}'">{{ $member->name }}</option>
+                                                @endforeach
+                                            @endforeach
+                                        </select>
+                                    </div>
+                                @endif
                                 <textarea name="instructions" rows="3" class="block w-full text-sm border-gray-300 rounded-lg" placeholder="Brief">{{ $document->description }}</textarea>
                                 <x-primary-button class="w-full !justify-center !text-sm !normal-case !tracking-normal !py-2.5">Send brief</x-primary-button>
                             </form>
@@ -848,14 +969,16 @@
                                                     <div x-show="edit" x-cloak class="mt-2 ml-7 p-2.5 bg-gray-50 rounded-lg space-y-2">
                                                         <form method="POST" action="{{ route('documents.tasks.reassign', [$document, $assignee]) }}" class="space-y-1.5">
                                                             @csrf
-                                                            <select name="user_id" required class="block w-full text-xs border-gray-300 rounded-md">
-                                                                <option value="">Reassign to…</option>
-                                                                @foreach ($reassignOptions as $option)
-                                                                    @if ($option->id !== $assignee->user_id)
-                                                                        <option value="{{ $option->id }}">{{ $option->name }}</option>
-                                                                    @endif
-                                                                @endforeach
-                                                            </select>
+                                                            <x-search-select size="sm" placeholder="Reassign to… (search)">
+                                                                <select name="user_id" required>
+                                                                    <option value="">Reassign to…</option>
+                                                                    @foreach ($reassignOptions as $option)
+                                                                        @if ($option->id !== $assignee->user_id)
+                                                                            <option value="{{ $option->id }}">{{ $option->name }}</option>
+                                                                        @endif
+                                                                    @endforeach
+                                                                </select>
+                                                            </x-search-select>
                                                             <input type="text" name="reason" placeholder="Reason (e.g. on leave)" class="block w-full text-xs border-gray-300 rounded-md">
                                                             <button class="text-xs font-medium text-white bg-brand-600 rounded-md px-2.5 py-1">Reassign</button>
                                                         </form>
@@ -880,8 +1003,64 @@
                                 @endif
                             @endforelse
                             <x-input-error :messages="$errors->get('reassign')" class="mt-2" />
+                        @elseif ($isPendingClosure)
+                            <p class="text-sm text-emerald-700">Reviews complete — with {{ $document->owner?->name }} (Brand Manager) for final approval and closure.</p>
                         @else
                             <p class="text-sm text-gray-400">Not yet submitted into a workflow.</p>
+                        @endif
+
+                        @php $matrix = $stageSchedule->where('state', '!=', 'skipped'); @endphp
+                        @if ($matrix->isNotEmpty())
+                            <div class="mt-4 pt-4 border-t border-gray-100">
+                                <div class="flex items-center justify-between mb-2">
+                                    <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Approval matrix &amp; due dates</p>
+                                    @if ($document->due_date)
+                                        <span class="text-xs text-gray-500">Overall due <strong class="text-gray-800">{{ $document->due_date->format('d M Y') }}</strong></span>
+                                    @endif
+                                </div>
+                                <ul class="space-y-2 text-sm">
+                                    @foreach ($matrix as $row)
+                                        <li x-data="{ edit: false }">
+                                            <div class="flex items-start gap-2">
+                                                <span @class([
+                                                    'mt-0.5 w-2 h-2 rounded-full shrink-0',
+                                                    'bg-brand-600' => $row['state'] === 'done',
+                                                    'bg-accent-500' => $row['state'] === 'open',
+                                                    'bg-gray-300' => $row['state'] === 'upcoming',
+                                                ])></span>
+                                                <div class="min-w-0 flex-1">
+                                                    <p class="text-gray-800 leading-tight">{{ $row['stage']->name }}
+                                                        @if ($row['stage']->parallel_group)<span class="text-[9px] uppercase tracking-wide text-brand-600 ml-1">parallel</span>@endif
+                                                    </p>
+                                                    <p class="text-[11px] text-gray-400">
+                                                        {{ collect($row['assignee_ids'])->map(fn ($id) => $scheduleUserNames[$id] ?? null)->filter()->join(', ') ?: ($row['state'] === 'done' ? 'Done' : 'Usual reviewers') }}
+                                                    </p>
+                                                </div>
+                                                <div class="text-right shrink-0">
+                                                    @if ($row['state'] === 'done')
+                                                        <span class="text-[11px] text-brand-700">✓ done</span>
+                                                    @else
+                                                        <span class="text-[11px] {{ $row['due_at']?->isPast() ? 'text-red-600 font-medium' : 'text-gray-600' }}">{{ $row['state'] === 'upcoming' ? 'planned ' : 'due ' }}{{ $row['due_at']?->format('d M, H:i') ?? '—' }}</span>
+                                                        @if ($row['overridden'])<span class="block text-[9px] uppercase tracking-wide text-amber-600">set by BM</span>@endif
+                                                        @if ($canManageTasks)
+                                                            <button type="button" @click="edit = ! edit" class="block ml-auto text-[11px] text-brand-600 hover:underline">Change</button>
+                                                        @endif
+                                                    @endif
+                                                </div>
+                                            </div>
+                                            @if ($canManageTasks && $row['state'] !== 'done')
+                                                <form x-show="edit" x-cloak method="POST" action="{{ route('documents.stages.due', [$document, $row['stage']]) }}" class="mt-1.5 ml-4 flex items-center gap-1.5">
+                                                    @csrf
+                                                    <input type="datetime-local" name="due_at" required min="{{ now()->format('Y-m-d\TH:i') }}" value="{{ $row['due_at']?->format('Y-m-d\TH:i') }}" class="text-xs border-gray-300 rounded-md py-1">
+                                                    <button class="text-xs font-medium text-white bg-brand-600 rounded-md px-2.5 py-1">Save</button>
+                                                </form>
+                                            @endif
+                                        </li>
+                                    @endforeach
+                                </ul>
+                                <p class="mt-2 text-[11px] text-gray-400">All times IST. Changing a due date notifies the stage's stakeholders.</p>
+                                <x-input-error :messages="$errors->get('due_at')" class="mt-1" />
+                            </div>
                         @endif
                     </div>
 
@@ -899,7 +1078,7 @@
                             <button type="button" @click="tab = 'comments'"
                                     :class="tab === 'comments' ? 'border-brand-600 text-brand-700' : 'border-transparent text-gray-400 hover:text-gray-700'"
                                     class="text-xs font-medium px-1 py-2.5 mr-4 border-b-2 -mb-px transition">
-                                Comments ({{ $document->comments->count() + $document->comments->sum(fn ($c) => $c->replies->count()) }})
+                                Comments ({{ $commentCount }})
                             </button>
                             @php $allPdfEdits = $document->versions->flatMap->pdfEdits->sortByDesc('created_at'); @endphp
                             <button type="button" @click="tab = 'edits'"
@@ -955,37 +1134,7 @@
                                 </form>
                             @endif
 
-                            @forelse ($document->comments as $comment)
-                                <div class="py-3 border-t border-gray-100 text-sm" id="comment-{{ $comment->id }}">
-                                    <div class="flex items-center justify-between gap-2">
-                                        <span class="font-medium text-gray-900 flex items-center gap-1.5"><x-avatar :name="$comment->author?->name" size="xs" />{{ $comment->author?->name }} @if ($comment->isDraft())<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700 font-medium">draft — only you</span> @endif</span>
-                                        <span class="text-gray-400 text-xs shrink-0">{{ $comment->created_at->diffForHumans() }}</span>
-                                    </div>
-                                    <p class="mt-1.5 text-gray-700 whitespace-pre-line">{{ $comment->body }}</p>
-                                    @unless ($commentsLocked)
-                                        <button type="button" onclick="document.getElementById('reply-form-{{ $comment->id }}').classList.toggle('hidden')" class="mt-1 text-xs text-brand-600 hover:underline">Reply</button>
-                                    @endunless
-
-                                    <form id="reply-form-{{ $comment->id }}" method="POST" action="{{ route('documents.comments.store', $document) }}" class="hidden mt-2 ml-4 space-y-2">
-                                        @csrf
-                                        <input type="hidden" name="parent_id" value="{{ $comment->id }}">
-                                        <textarea name="body" rows="2" required placeholder="Write a reply…" class="block w-full text-sm border-gray-300 rounded-lg"></textarea>
-                                        <x-primary-button>Post Reply</x-primary-button>
-                                    </form>
-
-                                    @foreach ($comment->replies as $reply)
-                                        <div class="mt-3 ml-4 pl-3 border-l-2 border-gray-200">
-                                            <div class="flex items-center justify-between gap-2">
-                                                <span class="font-medium text-gray-900 flex items-center gap-1.5"><x-avatar :name="$reply->author?->name" size="xs" />{{ $reply->author?->name }} @if ($reply->isDraft())<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700 font-medium">draft — only you</span> @endif</span>
-                                                <span class="text-gray-400 text-xs shrink-0">{{ $reply->created_at->diffForHumans() }}</span>
-                                            </div>
-                                            <p class="mt-1 text-gray-700 whitespace-pre-line">{{ $reply->body }}</p>
-                                        </div>
-                                    @endforeach
-                                </div>
-                            @empty
-                                <p class="text-sm text-gray-400">No comments yet — be the first to add one.</p>
-                            @endforelse
+                            @include('documents.partials.comments-by-version')
                         </div>
 
                         <div x-show="tab === 'edits'" class="p-6 max-h-[32rem] overflow-y-auto">
@@ -1194,12 +1343,14 @@
                         @if ($isOwner || auth()->user()->can('access-admin'))
                             <form id="add-observer-form" method="POST" action="{{ route('documents.observers.store', $document) }}" class="hidden mb-3 p-3 bg-gray-50 rounded-lg flex items-center gap-2">
                                 @csrf
-                                <select name="user_id" required class="text-sm border-gray-300 rounded-lg flex-1">
-                                    <option value="">Select a user…</option>
-                                    @foreach ($observableUsers as $user)
-                                        <option value="{{ $user->id }}">{{ $user->name }}</option>
-                                    @endforeach
-                                </select>
+                                <x-search-select class="flex-1" placeholder="Search a user…">
+                                    <select name="user_id" required>
+                                        <option value="">Select a user…</option>
+                                        @foreach ($observableUsers as $observable)
+                                            <option value="{{ $observable->id }}">{{ $observable->name }}</option>
+                                        @endforeach
+                                    </select>
+                                </x-search-select>
                                 <x-primary-button type="submit">Add</x-primary-button>
                             </form>
                         @endif
@@ -1293,6 +1444,9 @@
                             @if ($document->legal_hold)
                                 <p class="text-xs text-[#8f2323]">⚖️ Locked while under legal hold — release the hold to change lifecycle status.</p>
                             @else
+                                @if ($document->status === 'approved_for_production')
+                                    <p class="text-xs text-gray-500 mb-2">Closed and Approved for Production. Submit the update for distribution when it is ready to go out.</p>
+                                @endif
                                 <div class="flex flex-wrap gap-2">
                                     @foreach ($lifecycleActions as $targetStatus => $buttonLabel)
                                         @if ($document->status !== $targetStatus)
@@ -1307,6 +1461,7 @@
                             @endif
                         </div>
                     @endif
+                    @endif {{-- agency / everyone else --}}
                 </div>
             </div>
         </div>

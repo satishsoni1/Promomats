@@ -75,7 +75,7 @@
                         <p class="text-sm font-semibold text-gray-800 mt-3 mb-1">Pharma</p>
                         <ul class="text-sm text-gray-700 space-y-2 list-disc list-inside">
                             <li><strong>Pharma Workflow 1</strong> — 10-stage chain for new promotional
-                                material: Content Manager → TM/AGM Marketing → Regulatory (L1/L2) → Legal
+                                material: Content Manager → TM/AGM Marketing → Regulatory Affairs (L1/L2) → Legal
                                 (L1/L2) → R&amp;D → Chairperson's Office → post-production Content Manager
                                 pass → Design (Internal) → Approved for Distribution.</li>
                             <li><strong>Pharma Workflow 2</strong> — the agency-originated equivalent (11
@@ -88,15 +88,15 @@
                         <ul class="text-sm text-gray-700 space-y-2 list-disc list-inside">
                             <li><strong>PromoMats Workflow (Word / Video / PPT)</strong> and
                                 <strong>PromoMats Workflow (PDF / JPG / GIF)</strong> — wired to the named
-                                Himalaya Wellness approvers, ending in a parallel MLR block (Medical /
-                                Regulatory / Legal) and a Chairperson sign-off.</li>
+                                Himalaya Wellness approvers, ending in a parallel MLR block (R&D /
+                                Regulatory Affairs / Legal) and a Chairperson sign-off.</li>
                         </ul>
                         <p class="text-sm font-semibold text-gray-800 mt-4 mb-1">Scientific Publications</p>
                         <ul class="text-sm text-gray-700 space-y-2 list-disc list-inside">
                             <li><strong>Scientific Publications – Workflow 1 (Full Proof Cycle)</strong> —
                                 Content Review → Copy Editing → Proof Zero → Proof One → Proof Two (Project
                                 Lead ∥ AGM) → Proof Three (Project Lead ∥ Proofreading) → Proof Four review
-                                (Regulatory ∥ Legal ∥ Document Owner, in parallel) → Proof Four Feedback →
+                                (Regulatory Affairs ∥ Legal ∥ Document Owner, in parallel) → Proof Four Feedback →
                                 Proof Five → Check Pre-MP → Check MP / Approved for Distribution.</li>
                             <li><strong>Scientific Publications – Workflow 2 (Line Manager)</strong> — the
                                 short path: a single Line Manager approval before production.</li>

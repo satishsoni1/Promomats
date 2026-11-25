@@ -6,11 +6,27 @@ use Illuminate\Database\Eloquent\Model;
 
 class Brand extends Model
 {
-    protected $fillable = ['name', 'code', 'description', 'status', 'created_by', 'updated_by'];
+    protected $fillable = ['name', 'code', 'division', 'description', 'status', 'created_by', 'updated_by'];
+
+    /** @return array<string, string> division key => label */
+    public static function divisions(): array
+    {
+        return collect(config('promomats.divisions', []))->map(fn ($d) => $d['label'])->all();
+    }
+
+    public function divisionLabel(): ?string
+    {
+        return static::divisions()[$this->division] ?? null;
+    }
 
     public function documents()
     {
         return $this->hasMany(Document::class);
+    }
+
+    public function skus()
+    {
+        return $this->hasMany(Sku::class)->orderBy('name');
     }
 
     public function workflowRules()

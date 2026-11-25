@@ -14,7 +14,7 @@ class User extends Authenticatable
     use HasFactory, Notifiable, SoftDeletes;
 
     protected $fillable = [
-        'name', 'employee_code', 'email', 'department', 'admin_department', 'designation',
+        'name', 'employee_code', 'email', 'department', 'admin_department', 'designation', 'content_agency_id',
         'password', 'is_active', 'must_change_password', 'created_by',
     ];
 
@@ -107,14 +107,39 @@ class User extends Authenticatable
         return $this->hasAnyRole(config('promomats.roles.agency', ['content-agency', 'agency']));
     }
 
+    public function contentAgency()
+    {
+        return $this->belongsTo(ContentAgency::class);
+    }
+
+    /**
+     * An external agency login: holds only Content Agency role(s) and isn't an admin.
+     * They see a job only while the Brand Manager has work with their agency on it,
+     * never the workflow around it (MOM 24 Nov: "content agency cannot see workflow
+     * updates; it sees the document (with comments) only when the Brand Manager
+     * assigns it").
+     */
+    public function isAgencyUser(): bool
+    {
+        $agencySlugs = config('promomats.roles.agency', ['content-agency', 'agency']);
+        $roleSlugs = $this->roles->pluck('slug');
+
+        return $roleSlugs->isNotEmpty()
+            && $roleSlugs->diff($agencySlugs)->isEmpty()
+            && ! $this->canAdminister();
+    }
+
     /** Whether this person belongs to a work-task team ('design' or 'agency'). */
     public function inTeam(string $team): bool
     {
         return $team === 'agency' ? $this->isAgency() : $this->isDesignTeam();
     }
 
-    /** Active members of a work-task team: 'design' (internal Design Team) or 'agency'. */
-    public static function teamMembers(string $team)
+    /**
+     * Active members of a work-task team: 'design' (internal Design Team) or 'agency'.
+     * For 'agency', $agencyId narrows it to the people of one content agency.
+     */
+    public static function teamMembers(string $team, ?int $agencyId = null)
     {
         $slugs = $team === 'agency'
             ? config('promomats.roles.agency', ['content-agency', 'agency'])
@@ -122,7 +147,37 @@ class User extends Authenticatable
 
         return static::where('is_active', true)
             ->whereHas('roles', fn ($q) => $q->whereIn('slug', $slugs))
+            ->when($team === 'agency' && $agencyId, fn ($q) => $q->where('content_agency_id', $agencyId))
             ->orderBy('name');
+    }
+
+    /**
+     * Who takes the Chairperson stage unless the Brand Manager picks someone else
+     * (the Content Manager who uploads the Chairperson's offline sign-off).
+     */
+    public static function defaultChairpersonApprover(?Brand $brand = null): ?self
+    {
+        // The brand's division decides it (Zeal -> Rathna, Zandra -> Jalba).
+        $divisionEmail = $brand?->division ? config("promomats.divisions.{$brand->division}.chairperson_email") : null;
+        if ($divisionEmail && ($user = static::where('email', $divisionEmail)->where('is_active', true)->first())) {
+            return $user;
+        }
+
+        $email = config('promomats.workflow.chairperson_approver_email');
+
+        return $email ? static::where('email', $email)->where('is_active', true)->first() : null;
+    }
+
+    /**
+     * Each division's Chairperson approver, for the upload form.
+     *
+     * @return array<string, self> division key => user
+     */
+    public static function divisionChairpersons(): array
+    {
+        return collect(config('promomats.divisions', []))
+            ->map(fn ($d) => ! empty($d['chairperson_email']) ? static::where('email', $d['chairperson_email'])->where('is_active', true)->first() : null)
+            ->filter()->all();
     }
 
     /** Full, unscoped administrator. */
@@ -180,10 +235,11 @@ class User extends Authenticatable
     {
         return DocumentWorkTask::open()->where(function ($q) {
             $q->where('assigned_to', $this->id);
-            foreach (['design', 'agency'] as $team) {
-                if ($this->inTeam($team)) {
-                    $q->orWhere(fn ($q2) => $q2->where('team', $team)->whereNull('assigned_to'));
-                }
+            if ($this->inTeam('design')) {
+                $q->orWhere(fn ($q2) => $q2->where('team', 'design')->whereNull('assigned_to'));
+            }
+            if ($this->inTeam('agency')) {
+                $q->orWhere(fn ($q2) => $q2->where('team', 'agency')->whereNull('assigned_to')->forAgencyOf($this));
             }
         });
     }

@@ -101,12 +101,43 @@
                                 <svg class="w-4 h-4 text-gray-400 absolute left-2.5 top-[calc(50%+3px)] -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" /></svg>
                                 <x-text-input id="search" name="search" value="{{ request('search') }}" class="!pl-8 w-56 text-sm" placeholder="Title or reference no." />
                             </div>
+                            <div>
+                                <x-input-label value="Team" class="!text-xs !text-gray-500 !font-medium mb-1" />
+                                <select name="team" class="text-sm border-gray-300 rounded-md py-2" onchange="this.form.submit()">
+                                    <option value="">All teams</option>
+                                    @foreach (\App\Support\Teams::labels() as $teamKey => $teamLabel)
+                                        <option value="{{ $teamKey }}" @selected(request('team') === $teamKey)>{{ $teamLabel }}</option>
+                                    @endforeach
+                                </select>
+                            </div>
+                            <div class="w-48">
+                                <x-input-label value="Brand" class="!text-xs !text-gray-500 !font-medium mb-1" />
+                                <x-search-select placeholder="Any brand…">
+                                    <select name="brand" onchange="this.form.submit()">
+                                        <option value="">Any brand</option>
+                                        @foreach ($filterBrands as $b)
+                                            <option value="{{ $b->id }}" @selected(request('brand') == $b->id)>{{ $b->name }}</option>
+                                        @endforeach
+                                    </select>
+                                </x-search-select>
+                            </div>
+                            <div class="w-48">
+                                <x-input-label value="SKU" class="!text-xs !text-gray-500 !font-medium mb-1" />
+                                <x-search-select placeholder="Any SKU…">
+                                    <select name="sku" onchange="this.form.submit()">
+                                        <option value="">Any SKU</option>
+                                        @foreach ($filterSkus as $k)
+                                            <option value="{{ $k->id }}" @selected(request('sku') == $k->id)>{{ $k->name }}</option>
+                                        @endforeach
+                                    </select>
+                                </x-search-select>
+                            </div>
                             <label class="flex items-center gap-2 text-sm text-gray-600 pb-2 cursor-pointer select-none">
                                 <input type="checkbox" name="mine" value="1" @checked(request('mine')) class="rounded border-gray-300 text-brand-600 focus:ring-brand-500">
                                 My documents only
                             </label>
                             <button type="submit" class="inline-flex items-center px-4 py-2 bg-brand-600 border border-transparent rounded-lg font-semibold text-xs text-white uppercase tracking-widest hover:bg-brand-700 transition">Filter</button>
-                            @if (request()->anyFilled(['status', 'category', 'search', 'mine']))
+                            @if (request()->anyFilled(['status', 'category', 'search', 'mine', 'team', 'brand', 'sku']))
                                 <a href="{{ route('documents.index') }}" class="text-sm text-gray-400 hover:text-gray-700 pb-2">Reset</a>
                             @endif
                         </form>

@@ -36,7 +36,7 @@ trait WiresLinearApprovalChain
      */
     protected function wireStages(WorkflowTemplate $template, array $stages, string $revisionHubCode, bool $hubNaTerminates = true, bool $reviseWithOwner = false): void
     {
-        $roleId = fn (string $name) => Role::where('name', $name)->value('id');
+        $roleId = fn (string $name) => Role::where('slug', \Illuminate\Support\Str::slug($name))->value('id');
 
         $created = [];
         foreach ($stages as $s) {

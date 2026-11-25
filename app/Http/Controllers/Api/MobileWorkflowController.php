@@ -46,6 +46,16 @@ class MobileWorkflowController extends Controller
         return $this->relay(fn () => app(DocumentController::class)->submit($request, $document), 200, $document);
     }
 
+    public function close(Request $request, Document $document)
+    {
+        return $this->relay(fn () => app(DocumentController::class)->close($request, $document), 200, $document);
+    }
+
+    public function updateStageDue(Request $request, Document $document, \App\Models\WorkflowStage $stage)
+    {
+        return $this->relay(fn () => app(DocumentController::class)->updateStageDue($request, $document, $stage), 200, $document);
+    }
+
     public function updateStatus(Request $request, Document $document)
     {
         return $this->relay(fn () => app(DocumentController::class)->updateStatus($request, $document), 200, $document);

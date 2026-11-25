@@ -65,7 +65,7 @@ return [
     |
     */
 
-    'timezone' => env('APP_TIMEZONE', 'UTC'),
+    'timezone' => env('APP_TIMEZONE', 'Asia/Kolkata'), // MOM 24 Nov: the whole system runs on IST
 
     /*
     |--------------------------------------------------------------------------

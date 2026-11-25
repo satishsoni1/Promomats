@@ -19,7 +19,9 @@ use App\Models\DocumentWorkflowInstance;
 use App\Models\DocumentWorkflowStageRun;
 use App\Models\User;
 use App\Models\WorkflowStage;
+use App\Notifications\DocumentActionNotification;
 use App\Services\Audit\AuditLogger;
+use App\Services\Workflow\StageSchedule;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -61,6 +63,16 @@ class WorkflowEngine
             if (! $firstStage) {
                 throw ValidationException::withMessages([
                     'workflow' => 'The assigned workflow template has no stages configured.',
+                ]);
+            }
+
+            // Stages with nobody selected are skipped - make sure at least one isn't.
+            $anyStageRuns = $document->workflowTemplate->stages()->get()->contains(
+                fn (WorkflowStage $s) => ! $this->isStageEmpty($document, $s) && $s->conditionMatches($document)
+            );
+            if (! $anyStageRuns) {
+                throw ValidationException::withMessages([
+                    'workflow' => 'No stage of this workflow has a stakeholder to review it - pick at least one stakeholder.',
                 ]);
             }
 
@@ -106,21 +118,19 @@ class WorkflowEngine
 
         $anyOpened = false;
 
-        // MLR tracks the Brand Manager didn't pick anyone for are left out, once they
-        // have picked people for at least one track in the group (UAT feedback: "it
-        // should be only triggered to the selected stakeholder"). With no picks in
-        // the group at all, every track goes to its usual reviewers as before.
-        $groupHasPicks = $group->count() > 1
-            && $group->contains(fn (WorkflowStage $s) => $instance->document->approverIdsForStage($s) !== null);
-
         foreach ($group as $memberStage) {
-            if ($groupHasPicks && $instance->document->approverIdsForStage($memberStage) === null) {
+            // MOM 24 Nov: a stage nobody was selected for is skipped and hidden from
+            // the approval matrix. Once the Brand Manager has picked stakeholders,
+            // every stage they left empty is skipped (it used to be only MLR tracks);
+            // a stage whose role nobody eligible holds is skipped too, rather than
+            // stopping the workflow.
+            if ($this->isStageEmpty($instance->document, $memberStage)) {
                 $this->audit->record(
                     action: 'SKIPPED',
                     document: $instance->document,
                     instance: $instance,
                     stage: $memberStage,
-                    description: "Stage \"{$memberStage->name}\" skipped - the Brand Manager didn't select a stakeholder for it.",
+                    description: "Stage \"{$memberStage->name}\" skipped - no stakeholder was selected for it.",
                 );
 
                 DocumentWorkflowStageRun::updateOrCreate(
@@ -162,13 +172,8 @@ class WorkflowEngine
 
             $userIds = $this->resolveStageApprovers($instance->document, $memberStage);
 
-            if ($userIds->isEmpty()) {
-                throw ValidationException::withMessages([
-                    'workflow' => "Stage '{$memberStage->name}' has no one who can take it (check role assignments - Brand Managers and the job's own owner can't approve it).",
-                ]);
-            }
-
-            $dueHours = $instance->document->dueHoursForStage($memberStage);
+            // The Brand Manager may have set an exact due date/time for this stage.
+            $dueAt = $instance->document->dueAtForStage($memberStage);
 
             foreach ($userIds as $userId) {
                 $task = DocumentStageAssignee::create([
@@ -177,7 +182,7 @@ class WorkflowEngine
                     'user_id' => $userId,
                     'status' => 'pending',
                     'assigned_at' => now(),
-                    'due_at' => now()->addHours($dueHours),
+                    'due_at' => $dueAt,
                 ]);
 
                 ApprovalAssigned::dispatch($instance, $memberStage, User::find($userId), $task);
@@ -188,10 +193,31 @@ class WorkflowEngine
             $next = $group->first()->nextStage();
             if ($next) {
                 $this->enterStage($instance, $next);
+            } elseif ($group->contains(fn (WorkflowStage $s) => $s->isChairperson())) {
+                $this->awaitClosure($instance, 'approved');
             } else {
                 $this->completeInstance($instance, 'approved');
             }
+
+            return;
         }
+
+        // The overall due date follows the stages actually in play.
+        app(StageSchedule::class)->refreshDueDate($instance->document->fresh());
+    }
+
+    /**
+     * Whether nobody will be asked to take this stage on this document: the Brand
+     * Manager picked stakeholders but none for this stage, or nobody eligible holds
+     * its role(s). Such a stage is skipped and hidden from the approval matrix.
+     */
+    public function isStageEmpty(Document $document, WorkflowStage $stage): bool
+    {
+        if ($document->effectivePicksForStage($stage) === null && $document->hasStakeholderPicks()) {
+            return true;
+        }
+
+        return $this->resolveStageApprovers($document, $stage)->isEmpty();
     }
 
     /**
@@ -205,7 +231,7 @@ class WorkflowEngine
      */
     protected function resolveStageApprovers(Document $document, WorkflowStage $stage): Collection
     {
-        $picked = $document->approverIdsForStage($stage);
+        $picked = $document->effectivePicksForStage($stage);
 
         $ids = $picked ?? collect($stage->approvers()->get())
             ->flatMap(fn ($approver) => $approver->resolveUserIds())
@@ -237,6 +263,13 @@ class WorkflowEngine
         abort_unless(in_array($decision, ['approved', 'approved_with_changes', 'not_approved']), 422, 'Invalid decision.');
 
         return DB::transaction(function () use ($instance, $actor, $decision, $comments, $ipAddress) {
+            // Serialize decisions on the same instance. Without this, two reviewers in
+            // a parallel group approving at the same moment each saw the other's track
+            // still "open" and neither advanced the group - the workflow stalled.
+            // Must be the first read in the transaction so InnoDB's snapshot is taken
+            // after the lock is acquired (i.e. after the other decision committed).
+            $instance = DocumentWorkflowInstance::whereKey($instance->id)->lockForUpdate()->firstOrFail();
+
             $assignee = $instance->pendingAssignees()
                 ->where('user_id', $actor->id)
                 ->lockForUpdate()
@@ -393,6 +426,7 @@ class WorkflowEngine
         $stillOpen = $instance->stageRuns()
             ->whereIn('workflow_stage_id', $group->pluck('id'))
             ->where('status', 'open')
+            ->lockForUpdate() // locking read: sees the latest committed sibling runs, not a stale snapshot
             ->exists();
 
         if ($stillOpen) {
@@ -440,6 +474,15 @@ class WorkflowEngine
             ]);
         }
 
+        // MOM 24 Nov: after the Chairperson, the Brand Manager gives the final approval
+        // and closes the job (after "Approved with changes" they can upload a new
+        // version first) - it is not Approved for Production until they do.
+        if ($stage->isChairperson() && in_array($decision, ['approved', 'approved_with_changes'], true)) {
+            $this->awaitClosure($instance, $decision, $actor);
+
+            return;
+        }
+
         // A draft stage signed off: the job goes back to the Brand Manager, who
         // commissions the creative (Content Agency / Design Team) and triggers the
         // next step themselves - nothing moves on automatically (UAT feedback:
@@ -479,7 +522,13 @@ class WorkflowEngine
                 // review picks back up (the stage, or the whole parallel group,
                 // that flagged it) once resumeAfterRevision() runs after a new
                 // version is submitted.
-                $instance->update(['resume_at_stage_id' => $transition->resume_at_stage_id ?? $stage->id]);
+                $resumeAt = $transition->resume_at_stage_id ?? $stage->id;
+                // MOM 24 Nov: rejected at any stage after TM - once the new version is
+                // in, it goes back to TM and through every later stage again.
+                if ($decision === 'not_approved' && ($tm = $this->rereviewStageFor($stage))) {
+                    $resumeAt = $tm->id;
+                }
+                $instance->update(['resume_at_stage_id' => $resumeAt]);
                 $instance->document->update(['status' => 'approved_with_changes_pending']);
                 DocumentReturnedToOwner::dispatch($instance, $stage, $decision, $actor);
                 break;
@@ -489,7 +538,12 @@ class WorkflowEngine
                 // haven't opted into return_to_owner): jump straight back into
                 // another gate for a fresh pass, remembering where to resume once
                 // that clears.
-                $instance->update(['resume_at_stage_id' => $transition->resume_at_stage_id ?? $stage->id]);
+                $resumeAt = $transition->resume_at_stage_id ?? $stage->id;
+                // Rejected after TM/AGM: once the hub clears, review restarts at TM/AGM.
+                if ($decision === 'not_approved' && ($tm = $this->rereviewStageFor($stage))) {
+                    $resumeAt = $tm->id;
+                }
+                $instance->update(['resume_at_stage_id' => $resumeAt]);
                 $this->enterStage($instance, $transition->targetStage);
                 break;
 
@@ -501,6 +555,94 @@ class WorkflowEngine
                 $this->completeInstance($instance, $decision === 'approved_with_changes' ? 'approved_with_changes' : 'approved', $actor);
                 break;
         }
+    }
+
+    /**
+     * The TM stage a rejection at $stage sends the revision back through, or null
+     * when $stage is TM itself or comes before it.
+     */
+    protected function rereviewStageFor(WorkflowStage $stage): ?WorkflowStage
+    {
+        $tm = $stage->template->stages()
+            ->whereIn('code', config('promomats.workflow.rereview_from_stage_codes', ['TM_AGM']))
+            ->orderBy('sequence_no')
+            ->first();
+
+        return $tm && $stage->sequence_no > $tm->sequence_no ? $tm : null;
+    }
+
+    /**
+     * The Chairperson has signed off: the workflow's reviews are over, and the job
+     * waits on its Brand Manager's final approval and closure (see close()).
+     */
+    protected function awaitClosure(DocumentWorkflowInstance $instance, string $decision, ?User $actor = null): void
+    {
+        $instance->update([
+            'status' => $decision === 'approved_with_changes' ? 'approved_with_changes' : 'approved',
+            'completed_at' => now(),
+            'current_stage_id' => null,
+        ]);
+        $instance->document->update(['status' => 'pending_closure']);
+
+        $this->audit->record(
+            action: 'AWAITING_CLOSURE',
+            document: $instance->document,
+            instance: $instance,
+            actor: $actor,
+            description: $decision === 'approved_with_changes'
+                ? 'Chairperson approved with changes - with the Brand Manager to upload a new version (optional) and close.'
+                : 'Chairperson approved - with the Brand Manager for final approval and closure.',
+        );
+
+        $owner = $instance->document->owner;
+        if ($owner?->is_active) {
+            $owner->notify(new DocumentActionNotification(
+                document: $instance->document,
+                event: 'closure_pending',
+                actor: $actor,
+                decision: $decision,
+                comments: $instance->actions()->latest('acted_at')->value('comments'),
+            ));
+        }
+    }
+
+    /**
+     * The Brand Manager's final approval and closure after the Chairperson. The job
+     * becomes Approved for Production (the template's completion status); from
+     * there the Brand Manager submits it for distribution.
+     */
+    public function close(Document $document, User $actor, ?DocumentVersion $newVersion = null): void
+    {
+        DB::transaction(function () use ($document, $actor, $newVersion) {
+            $document = Document::lockForUpdate()->findOrFail($document->id);
+            if ($document->status !== 'pending_closure') {
+                throw ValidationException::withMessages(['closure' => 'This job is not waiting to be closed.']);
+            }
+
+            $instance = $document->workflowInstances()->latest('id')->firstOrFail();
+            if ($newVersion) {
+                $instance->update(['document_version_id' => $newVersion->id]);
+            }
+
+            $status = $instance->template?->completion_status ?: 'approved_for_production';
+            $document->update(['status' => $status]);
+
+            $this->audit->record(
+                action: 'DOCUMENT_CLOSED',
+                document: $document,
+                instance: $instance,
+                actor: $actor,
+                oldStatus: 'pending_closure',
+                newStatus: $status,
+                description: "{$actor->name} gave the final approval and closed the job" . ($newVersion ? " with v{$newVersion->version_no}" : '') . '.',
+            );
+
+            WorkflowCompleted::dispatch($instance, $instance->status, $actor, 'pending_closure');
+
+            if ($status === 'approved_for_distribution') {
+                DocumentFinalApproved::dispatch($document, $instance, $actor);
+            }
+        });
     }
 
     /**
@@ -527,7 +669,12 @@ class WorkflowEngine
             // revision is in, move on to the next stage (or finish, after the last
             // one) instead of sending it back to the same reviewers (UAT feedback).
             // Not Approved still goes back to the stage that rejected it.
+            // Only when that stage is the one that sent it back: after a rejection at
+            // a later stage the job resumes at TM/AGM, which must review it again even
+            // if it had approved with changes earlier.
+            $lastStageId = $instance->actions()->latest('acted_at')->latest('id')->value('workflow_stage_id');
             if (! $resumeStage->isDraft()
+                && $resumeStage->groupSiblings()->contains('id', $lastStageId)
                 && $this->wasApprovedWithChanges($instance, $resumeStage)
                 && ($instance->document->workflowTemplate->awc_resume ?? 'next_stage') === 'next_stage') {
                 $next = $resumeStage->nextStage();
@@ -584,7 +731,8 @@ class WorkflowEngine
     /**
      * Hand a pending task to someone else - e.g. the original reviewer is on leave.
      * The old task is closed as 'reassigned' (kept for the audit trail) and a new
-     * one opened for $newUser with the same due date.
+     * one opened for $newUser, due 48 hours (the stage's due period) after it's
+     * assigned to them.
      */
     public function reassignTask(DocumentStageAssignee $task, User $newUser, User $actor, ?string $reason = null): DocumentStageAssignee
     {
@@ -618,9 +766,9 @@ class WorkflowEngine
                 'reassign_reason' => $reason,
                 'status' => 'pending',
                 'assigned_at' => now(),
-                'due_at' => $task->due_at && $task->due_at->isFuture()
-                    ? $task->due_at
-                    : now()->addHours($task->instance->document->dueHoursForStage($task->stage)),
+                // 48 hours (the stage's due period) from the time it's assigned to them -
+                // unless the Brand Manager set an exact due date/time for the stage.
+                'due_at' => $task->instance->document->dueAtForStage($task->stage),
             ]);
 
             $this->audit->record(

@@ -7,6 +7,9 @@
 
     @can('access-admin')
         <a href="{{ route('admin.brands.index') }}" class="pb-2 px-1 whitespace-nowrap {{ request()->routeIs('admin.brands.*') ? 'border-b-2 border-brand-600 text-brand-600 font-medium' : 'text-gray-500' }}">Brands</a>
+        <a href="{{ route('admin.skus.index') }}" class="pb-2 px-1 whitespace-nowrap {{ request()->routeIs('admin.skus.*') ? 'border-b-2 border-brand-600 text-brand-600 font-medium' : 'text-gray-500' }}">SKUs</a>
+        <a href="{{ route('admin.countries.index') }}" class="pb-2 px-1 whitespace-nowrap {{ request()->routeIs('admin.countries.*') ? 'border-b-2 border-brand-600 text-brand-600 font-medium' : 'text-gray-500' }}">Countries</a>
+        <a href="{{ route('admin.content-agencies.index') }}" class="pb-2 px-1 whitespace-nowrap {{ request()->routeIs('admin.content-agencies.*') ? 'border-b-2 border-brand-600 text-brand-600 font-medium' : 'text-gray-500' }}">Content Agencies</a>
         <a href="{{ route('admin.document-types.index') }}" class="pb-2 px-1 whitespace-nowrap {{ request()->routeIs('admin.document-types.*') ? 'border-b-2 border-brand-600 text-brand-600 font-medium' : 'text-gray-500' }}">Document Types</a>
         <a href="{{ route('admin.claims.index') }}" class="pb-2 px-1 whitespace-nowrap {{ request()->routeIs('admin.claims.*') ? 'border-b-2 border-brand-600 text-brand-600 font-medium' : 'text-gray-500' }}">Claims</a>
         <a href="{{ route('admin.claim-candidates.index') }}" class="pb-2 px-1 whitespace-nowrap {{ request()->routeIs('admin.claim-candidates.*') ? 'border-b-2 border-brand-600 text-brand-600 font-medium' : 'text-gray-500' }}">

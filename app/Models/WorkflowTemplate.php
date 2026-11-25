@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\DB;
 class WorkflowTemplate extends Model
 {
     protected $fillable = [
-        'name', 'code', 'family_code', 'version', 'description', 'applies_to_category', 'department', 'target_audiences', 'is_active', 'owner_can_customize_workflow', 'awc_resume', 'completion_status', 'is_private', 'derived_from_template_id', 'created_by',
+        'name', 'code', 'family_code', 'version', 'description', 'applies_to_category', 'department', 'team', 'target_audiences', 'is_active', 'owner_can_customize_workflow', 'awc_resume', 'completion_status', 'is_private', 'derived_from_template_id', 'created_by',
     ];
 
     protected $casts = [
@@ -114,6 +114,7 @@ class WorkflowTemplate extends Model
                 'description' => $this->description,
                 'applies_to_category' => $this->applies_to_category,
                 'department' => $this->department,
+                'team' => $this->team ?? 'pharma',
                 'target_audiences' => $this->target_audiences,
                 'is_active' => true,
                 'owner_can_customize_workflow' => (bool) $this->owner_can_customize_workflow,
@@ -150,6 +151,7 @@ class WorkflowTemplate extends Model
                 'description' => 'Per-document customised copy of "' . $this->name . '" for ' . $document->reference_no . '.',
                 'applies_to_category' => $this->applies_to_category,
                 'department' => $this->department,
+                'team' => $this->team ?? 'pharma',
                 'target_audiences' => $this->target_audiences,
                 'is_active' => false,
                 'owner_can_customize_workflow' => false,

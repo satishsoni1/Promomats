@@ -28,23 +28,23 @@ class TargetAudience
     public const GUIDANCE = [
         'patient' => [
             'depth' => 'high',
-            'message' => 'Patient-facing content needs the deepest review — expect Regulatory, Legal, and R&D sign-off in addition to marketing approval before this can reach a patient.',
+            'message' => 'Patient-facing content needs the deepest review — expect Regulatory Affairs, Legal, and R&D sign-off in addition to marketing approval before this can reach a patient.',
         ],
         'hcp' => [
             'depth' => 'high',
-            'message' => 'Content aimed at healthcare professionals is still regulated promotional material — expect full Regulatory and Legal review before distribution.',
+            'message' => 'Content aimed at healthcare professionals is still regulated promotional material — expect full Regulatory Affairs and Legal review before distribution.',
         ],
         'payer' => [
             'depth' => 'high',
-            'message' => 'Payer-facing material (formulary, pricing, health-economics content) needs Regulatory and Legal review, and often Health Economics sign-off.',
+            'message' => 'Payer-facing material (formulary, pricing, health-economics content) needs Regulatory Affairs and Legal review, and often Health Economics sign-off.',
         ],
         'general_public' => [
             'depth' => 'high',
-            'message' => 'Public-facing content carries the same scrutiny as patient-facing material — route it through a full Regulatory/Legal review workflow.',
+            'message' => 'Public-facing content carries the same scrutiny as patient-facing material — route it through a full Regulatory Affairs/Legal review workflow.',
         ],
         'sales_rep' => [
             'depth' => 'medium',
-            'message' => 'Rep-facing material is still promotional and needs Marketing and Regulatory review, though it can often skip stages aimed at public claims substantiation.',
+            'message' => 'Rep-facing material is still promotional and needs Marketing and Regulatory Affairs review, though it can often skip stages aimed at public claims substantiation.',
         ],
         'internal' => [
             'depth' => 'low',

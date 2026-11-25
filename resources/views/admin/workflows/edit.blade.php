@@ -39,6 +39,15 @@
                 <p class="text-xs text-gray-400 mb-4">Editable even when the workflow is locked — these don't change any in-flight document's path.</p>
                 <form method="POST" action="{{ route('admin.workflows.settings.update', $workflow) }}">
                     @csrf
+                    <label class="block text-sm mb-4">
+                        <span class="font-medium text-gray-800">Team</span>
+                        <select name="team" class="mt-1 block w-64 text-sm border-gray-300 rounded-md">
+                            @foreach (\App\Support\Teams::labels() as $teamKey => $teamLabel)
+                                <option value="{{ $teamKey }}" @selected(($workflow->team ?? 'pharma') === $teamKey)>{{ $teamLabel }}</option>
+                            @endforeach
+                        </select>
+                        <span class="block text-xs text-gray-500 mt-0.5">Offered on the upload form only to this team's jobs.</span>
+                    </label>
                     <label class="flex items-start gap-3 text-sm">
                         <input type="checkbox" name="owner_can_customize_workflow" value="1" @checked($workflow->owner_can_customize_workflow) class="mt-0.5 rounded border-gray-300 text-brand-600">
                         <span>

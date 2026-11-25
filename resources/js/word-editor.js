@@ -31,6 +31,13 @@ export default function wordReviewEditor({ fileUrl, saveUrl, csrfToken, baseVers
         saveError: null,
         savedVersionNo: null,
         changeNotes: '',
+        // Full-screen review (MOM 24 Nov).
+        full: false,
+
+        toggleFull() {
+            this.full = !this.full;
+            document.body.classList.toggle('overflow-hidden', this.full);
+        },
 
         async init() {
             try {

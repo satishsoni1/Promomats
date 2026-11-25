@@ -35,7 +35,8 @@ class WordReviewController extends Controller
      */
     public static function editorRole(Document $document, User $user): string
     {
-        if ($document->legal_hold || $document->commentsLockedFor($user)) {
+        // Agency logins read the job (with its comments) but upload through their task.
+        if ($document->legal_hold || $document->commentsLockedFor($user) || $user->isAgencyUser()) {
             return 'viewer';
         }
 

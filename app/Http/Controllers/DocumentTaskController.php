@@ -62,13 +62,20 @@ class DocumentTaskController extends Controller
             description: "Due date for {$task->user?->name} at \"{$task->stage->name}\" moved from " . ($old?->format('d M Y H:i') ?? '—') . ' to ' . $task->due_at->format('d M Y H:i') . '.',
         );
 
-        if ($task->user && $task->user_id !== $request->user()->id) {
-            $task->user->notify(new DocumentActionNotification(
+        app(\App\Services\Workflow\StageSchedule::class)->refreshDueDate($document->fresh());
+
+        // Every due-date change is notified (MOM 24 Nov) - the reviewer, and the job
+        // owner when someone else (an admin) moved it.
+        $recipients = collect([$task->user, $document->owner])->filter()
+            ->unique('id')
+            ->reject(fn ($u) => $u->id === $request->user()->id || ! $u->is_active);
+        foreach ($recipients as $recipient) {
+            $recipient->notify(new DocumentActionNotification(
                 document: $document,
-                event: 'stage_assigned',
+                event: 'due_date_changed',
                 stage: $task->stage,
                 actor: $request->user(),
-                comments: 'Due date updated to ' . $task->due_at->format('d M Y, H:i') . '.',
+                comments: 'Due date updated to ' . $task->due_at->format('d M Y, H:i') . ' IST.',
             ));
         }
 

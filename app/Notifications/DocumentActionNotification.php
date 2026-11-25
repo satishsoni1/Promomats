@@ -20,7 +20,8 @@ class DocumentActionNotification extends Notification implements ShouldQueue
                                // version_uploaded | claim_inserted | lifecycle_changed | overdue_reminder |
                                // retrieval_requested | retrieval_completed | retrieval_failed | content_edited |
                                // due_soon_reminder | task_reassigned | work_task_created | work_task_assigned |
-                               // work_task_completed | revision_needed | draft_aligned
+                               // work_task_completed | revision_needed | draft_aligned |
+                               // due_date_changed | closure_pending
         public ?WorkflowStage $stage = null,
         public ?User $actor = null,
         public ?string $decision = null,
@@ -62,7 +63,7 @@ class DocumentActionNotification extends Notification implements ShouldQueue
             )
             ->when(
                 $this->event === 'revision_needed',
-                fn ($mail) => $mail->line('Open the job to upload the revised file yourself, or assign it to the Content Agency or the Design Team. Once you resubmit, it goes straight back to the stage that sent it back.')
+                fn ($mail) => $mail->line('Open the job to upload the revised file yourself, or assign it to the Content Agency or the Design Team. Once you resubmit, it goes back to the stage that sent it back - or, if it was rejected after TM/AGM, back to TM/AGM and every stage after it again.')
             )
             ->when(
                 $this->event === 'draft_aligned',
@@ -116,6 +117,8 @@ class DocumentActionNotification extends Notification implements ShouldQueue
             'work_task_completed' => "File uploaded - please confirm: {$this->document->title}",
             'revision_needed' => "Action required: revise {$this->document->title}",
             'draft_aligned' => "Draft aligned - assign the creative: {$this->document->title}",
+            'due_date_changed' => "Due date changed: {$this->document->title}",
+            'closure_pending' => "Final approval & closure needed: {$this->document->title}",
             default => $this->document->title,
         };
     }
@@ -142,6 +145,8 @@ class DocumentActionNotification extends Notification implements ShouldQueue
             'work_task_completed' => "{$this->actorLabel()} uploaded a file for '{$this->document->title}'.",
             'draft_aligned' => "{$this->actorLabel()} aligned the draft of '{$this->document->title}' at stage '{$this->stage?->name}'. It is back with you to commission the creative and start the review.",
             'revision_needed' => "'{$this->document->title}' was {$this->decisionLabel()} at stage '{$this->stage?->name}' by {$this->actorLabel()} and is waiting on you to upload the revision.",
+            'due_date_changed' => "{$this->actorLabel()} changed the due date of stage '{$this->stage?->name}' on '{$this->document->title}'.",
+            'closure_pending' => "The Chairperson has {$this->decisionLabel()} '{$this->document->title}'. It is waiting on your final approval and closure" . ($this->decision === 'approved_with_changes' ? ' - you can upload a new version first.' : '.'),
             default => "There is an update on '{$this->document->title}'.",
         };
     }

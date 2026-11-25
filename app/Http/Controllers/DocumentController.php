@@ -40,6 +40,9 @@ class DocumentController extends Controller
         $documents = Document::query()
             ->visibleTo($request->user())
             ->with(['owner', 'currentVersion', 'workflowTemplate', 'documentType'])
+            ->when($request->filled('team'), fn ($q) => $q->where('team', $request->team))
+            ->when($request->filled('brand'), fn ($q) => $q->where('brand_id', $request->brand))
+            ->when($request->filled('sku'), fn ($q) => $q->where('sku_id', $request->sku))
             ->when($request->filled('channel'), fn ($q) => $q->where('channel', $request->channel))
             ->when($request->filled('type'), fn ($q) => $q->where('document_type_id', $request->type))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->status))
@@ -60,7 +63,12 @@ class DocumentController extends Controller
         $categoryCounts = Document::visibleTo($request->user())->whereNotNull('category')->selectRaw('category, count(*) as c')->groupBy('category')->pluck('c', 'category');
         $view = $request->get('view', 'table') === 'grid' ? 'grid' : 'table';
 
-        return view('documents.index', compact('documents', 'statusCounts', 'categoryCounts', 'view'));
+        // Searchable Brand / SKU filters; SKUs narrow to the chosen brand.
+        $filterBrands = Brand::orderBy('name')->get(['id', 'name']);
+        $filterSkus = \App\Models\Sku::when($request->filled('brand'), fn ($q) => $q->where('brand_id', $request->brand))
+            ->orderBy('name')->get(['id', 'name']);
+
+        return view('documents.index', compact('documents', 'statusCounts', 'categoryCounts', 'view', 'filterBrands', 'filterSkus'));
     }
 
     public function create()
@@ -74,6 +82,21 @@ class DocumentController extends Controller
         $projects = Project::where('status', 'active')->orderBy('name')->get(['id', 'name', 'target_audience']);
         $brands = Brand::active()->orderBy('name')->get();
         $documentTypes = DocumentType::active()->orderBy('name')->get();
+        // MOM 24 Nov: SKU (filtered by brand), Country and Category are dropdowns.
+        $skus = \App\Models\Sku::active()->orderBy('name')->get(['id', 'brand_id', 'name', 'code']);
+        $countries = \App\Models\Country::active()->orderBy('name')->get(['id', 'name', 'code']);
+        $categories = Document::CATEGORIES;
+        $chairpersonDefault = User::defaultChairpersonApprover();
+        // Chairperson by brand division (Zeal -> Rathna, Zandra -> Jalba): every
+        // division's approver is offered, and the brand's one is pre-ticked.
+        $divisionChairs = User::divisionChairpersons();
+        $chairpersons = collect($divisionChairs)->push($chairpersonDefault)->filter()
+            ->reject(fn ($u) => $u->id === auth()->id())->unique('id')->values();
+        $chairpersonByBrand = $brands->mapWithKeys(fn ($b) => [(string) $b->id => ($divisionChairs[$b->division] ?? $chairpersonDefault)?->id])
+            ->reject(fn ($id) => $id === null || $id === auth()->id())->all();
+        $agencies = \App\Models\ContentAgency::active()->orderBy('name')
+            ->with(['users' => fn ($q) => $q->where('is_active', true)->orderBy('name')])
+            ->get();
 
         // For templates whose admin has enabled owner customization: the per-stage
         // candidate people the upload form lets the owner narrow down to a named
@@ -100,11 +123,18 @@ class DocumentController extends Controller
                 'approval_mode' => $s->approval_mode,
                 'is_final' => (bool) $s->is_final_distribution_stage,
                 'is_draft' => $s->isDraft(),
+                'is_chairperson' => $s->isChairperson(),
                 'due_hours' => $s->sla_hours ?? $defaultDueHours,
                 'candidates' => $s->candidateUserIds()
+                    ->when($s->isChairperson(), fn ($ids) => $chairpersons->pluck('id')->merge($ids)->unique())
                     ->reject(fn ($uid) => $bmOnlyIds->contains($uid))
-                    ->map(fn ($uid) => ['id' => $uid, 'name' => $userNames[$uid] ?? "User #{$uid}"])
+                    ->map(fn ($uid) => ['id' => $uid, 'name' => $userNames[$uid] ?? $chairpersons->firstWhere('id', $uid)?->name ?? "User #{$uid}"])
                     ->values(),
+                // Pre-ticked: the only candidate, or the Chairperson's default approver
+                // (the create form swaps it for the selected brand's division approver).
+                'default_ids' => $s->isChairperson() && $chairpersonDefault && $chairpersonDefault->id !== auth()->id()
+                    ? [$chairpersonDefault->id]
+                    : [],
             ])->values()]);
 
         // For the "add a stage" picker in the structural editor: every active user
@@ -122,7 +152,17 @@ class DocumentController extends Controller
             ->orderBy('priority')
             ->get(['workflow_template_id', 'brand_id', 'document_type_id', 'department', 'priority']);
 
-        return view('documents.create', compact('templates', 'projects', 'brands', 'documentTypes', 'workflowRules', 'templateApproverOptions', 'allUsers', 'allRoles', 'defaultDueHours'));
+        // Pharma / Scientific Publications: the form starts on the user's own team.
+        $teams = config('promomats.teams');
+        $defaultTeam = \App\Support\Teams::forUser(auth()->user());
+
+        // Pharma: R&D / Legal / Regulatory Affairs must each be selected - which
+        // people and roles count for which group, for the form's live checklist.
+        $requiredStakeholders = collect(array_keys($teams))->mapWithKeys(fn ($team) => [$team => [
+            'groups' => array_keys(\App\Support\RequiredStakeholders::groups($team)),
+        ] + \App\Support\RequiredStakeholders::lookup($team)])->all();
+
+        return view('documents.create', compact('templates', 'projects', 'brands', 'documentTypes', 'workflowRules', 'templateApproverOptions', 'allUsers', 'allRoles', 'defaultDueHours', 'skus', 'countries', 'categories', 'agencies', 'teams', 'defaultTeam', 'requiredStakeholders', 'chairpersonByBrand'));
     }
 
     public function store(Request $request)
@@ -132,8 +172,12 @@ class DocumentController extends Controller
         $validated = $request->validate([
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
-            'category' => ['nullable', 'string', 'max:120'],
+            'team' => ['nullable', 'string', 'in:' . implode(',', \App\Support\Teams::keys())],
+            'category' => ['nullable', 'string', 'in:' . implode(',', Document::CATEGORIES)],
             'brand_id' => ['nullable', 'exists:brands,id'],
+            // MOM 24 Nov: "Product" is now the SKU, chosen from the brand's SKU list.
+            'sku_id' => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('skus', 'id')->where('status', 'active')],
+            'country_id' => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('countries', 'id')->where('status', 'active')],
             'document_type_id' => ['nullable', 'exists:document_types,id'],
             'channel' => ['nullable', 'in:print,digital'],
             'products' => ['nullable', 'string', 'max:500'],
@@ -169,6 +213,8 @@ class DocumentController extends Controller
             // Manager uploads the Word draft for Content Manager alignment first and
             // commissions the creative once it's aligned.
             'creative_team' => ['nullable', 'in:later,design,agency'],
+            'content_agency_id' => ['nullable', 'integer', 'exists:content_agencies,id'],
+            'creative_assign_to' => ['nullable', 'integer', 'exists:users,id'],
             // Reference documents (studies, sources) attached at upload time.
             'reference_files' => ['nullable', 'array', 'max:20'],
             'reference_files.*' => ['file', 'max:512000'],
@@ -177,6 +223,18 @@ class DocumentController extends Controller
             // For very large files (100MB+), pair this with resumable/chunked upload on the frontend.
             'file' => ['required_unless:is_placeholder,1', 'nullable', 'file', 'max:512000'], // 500MB via standard form upload
         ]);
+
+        // Each team has its own fields: anything the job's team doesn't use is dropped
+        // (e.g. brand / SKU / collateral on a Scientific Publications job).
+        $team = $validated['team'] ?? \App\Support\Teams::forUser($request->user());
+        foreach (['category' => ['category'], 'brand' => ['brand_id'], 'sku' => ['sku_id', 'products'], 'country' => ['country_id', 'countries'],
+                  'channel' => ['channel'], 'document_type' => ['document_type_id'], 'target_audience' => ['target_audience']] as $field => $keys) {
+            if (! \App\Support\Teams::hasField($team, $field)) {
+                foreach ($keys as $key) {
+                    $validated[$key] = null;
+                }
+            }
+        }
 
         $isPlaceholder = (bool) ($validated['is_placeholder'] ?? false);
         $documentType = ! empty($validated['document_type_id']) ? DocumentType::find($validated['document_type_id']) : null;
@@ -210,8 +268,18 @@ class DocumentController extends Controller
             $workflowTemplateId = $resolved?->id;
         }
 
+        // Only this team's workflows (an auto-resolved one included).
+        if ($workflowTemplateId && (WorkflowTemplate::whereKey($workflowTemplateId)->value('team') ?? 'pharma') !== $team) {
+            if (! empty($validated['workflow_template_id'])) {
+                return back()->withErrors(['workflow_template_id' => 'That workflow belongs to another team - pick one of the ' . \App\Support\Teams::label($team) . ' workflows.'])->withInput();
+            }
+            $workflowTemplateId = null;
+        }
+
         if (! $workflowTemplateId) {
-            return back()->withErrors(['workflow_template_id' => 'No workflow could be determined automatically for this Brand/Document Type - please select one.'])->withInput();
+            return back()->withErrors(['workflow_template_id' => $team === 'pharma'
+                ? 'No workflow could be determined automatically for this Brand/Document Type - please select one.'
+                : 'Select one of the ' . \App\Support\Teams::label($team) . ' workflows.'])->withInput();
         }
 
         // Validate any owner workflow customisation against the resolved template
@@ -223,21 +291,37 @@ class DocumentController extends Controller
             ? []
             : $this->resolveStageApproverPicks($workflowTemplateId, $validated['stage_approvers'] ?? []);
 
-        $countries = $this->splitTags($validated['countries'] ?? null);
+        // Pharma: the stakeholders selected must include at least one from R&D, Legal
+        // and Regulatory Affairs (checked where the Brand Manager selects them).
+        $this->assertRequiredStakeholders($team, $workflowTemplateId, $stageApproverPicks, $workflowEdit, $workflowEdit ? 'workflow_edit' : 'stage_approvers');
+
+        $sku = ! empty($validated['sku_id']) ? \App\Models\Sku::find($validated['sku_id']) : null;
+        if ($sku && ! empty($validated['brand_id']) && (int) $sku->brand_id !== (int) $validated['brand_id']) {
+            return back()->withErrors(['sku_id' => "\"{$sku->name}\" is not a SKU of the selected brand."])->withInput();
+        }
+        $country = ! empty($validated['country_id']) ? \App\Models\Country::find($validated['country_id']) : null;
+
+        // The master-data picks are the source of truth; the tag columns mirror them
+        // so search, AI prompts and older screens keep working.
+        $countries = $country ? [$country->name] : $this->splitTags($validated['countries'] ?? null);
+        $products = $sku ? [$sku->name] : $this->splitTags($validated['products'] ?? null);
 
         $document = Document::create([
             'title' => $validated['title'],
             'description' => $validated['description'] ?? null,
+            'team' => $team,
             'category' => $validated['category'] ?? null,
-            'brand_id' => $validated['brand_id'] ?? null,
+            'brand_id' => $validated['brand_id'] ?? $sku?->brand_id,
+            'sku_id' => $sku?->id,
+            'country_id' => $country?->id,
             'document_type_id' => $validated['document_type_id'] ?? null,
             'channel' => $validated['channel'] ?? $documentType?->channel,
             'is_placeholder' => $isPlaceholder,
             'due_date' => $validated['due_date'] ?? null,
-            'products' => $this->splitTags($validated['products'] ?? null),
+            'products' => $products,
             'countries' => $countries,
             'target_audience' => $validated['target_audience'] ?? null,
-            'reference_no' => $this->generateReferenceNo($validated['category'] ?? null, $countries),
+            'reference_no' => $this->generateReferenceNo($validated['category'] ?? null, $country ? [$country->referencePrefix()] : $countries),
             'owner_id' => $request->user()->id,
             'workflow_template_id' => $workflowTemplateId,
             'project_id' => $validated['project_id'] ?? null,
@@ -282,6 +366,9 @@ class DocumentController extends Controller
 
         $this->saveStageDueHours($document, $validated['stage_due_hours'] ?? []);
 
+        // MOM 24 Nov: the overall due date is worked out from the stages selected.
+        app(\App\Services\Workflow\StageSchedule::class)->refreshDueDate($document->fresh());
+
         foreach ($request->file('reference_files', []) as $referenceFile) {
             $this->storeReference($document, $referenceFile, $request->user());
         }
@@ -302,8 +389,10 @@ class DocumentController extends Controller
                 document: $document,
                 requestedBy: $request->user(),
                 instructions: $validated['design_instructions'] ?? null,
-                dueAt: ! empty($validated['due_date']) ? \Illuminate\Support\Carbon::parse($validated['due_date'])->endOfDay() : now()->addHours(config('promomats.due_dates.default_stage_hours', 48)),
+                dueAt: now()->addHours(config('promomats.due_dates.default_stage_hours', 48)),
                 team: $team,
+                agencyId: $team === 'agency' ? ($validated['content_agency_id'] ?? null) : null,
+                assignTo: $validated['creative_assign_to'] ?? null,
             );
 
             return redirect()->route('documents.show', $document)
@@ -404,8 +493,12 @@ class DocumentController extends Controller
             'cycle',
             'watchers',
             'brand',
+            'sku',
+            'country',
             'documentType',
             'distributionRecords',
+            'stageSettings',
+            'stageApproverSelections',
         ]);
 
         $availableClaims = Claim::where('status', 'approved')->orderBy('match_text')->get();
@@ -433,7 +526,12 @@ class DocumentController extends Controller
             })
             ->take(5);
 
-        $commentsLocked = $document->commentsLockedFor(request()->user());
+        $commentsLocked = $document->commentsLockedFor(request()->user()) || request()->user()->isAgencyUser();
+
+        // MOM 24 Nov: comments shown version by version, including the comments
+        // embedded in each Word version; and the approval matrix with due dates.
+        $commentsByVersion = $this->commentsByVersion($document);
+        $stageSchedule = app(\App\Services\Workflow\StageSchedule::class)->for($document);
 
         // Page-anchored comment pins, grouped by page number, in the shape the PDF
         // viewer's Alpine component expects: { "1": [ {id, x_position, ...} ], ... }
@@ -517,7 +615,8 @@ class DocumentController extends Controller
         return view('documents.show', compact(
             'document', 'availableClaims', 'availableModules', 'suggestedClaims', 'pdfAnnotationsByPage',
             'videoAnnotations', 'latestComplianceInsight', 'latestRevisionInsight', 'latestRetrievalRequest',
-            'claimReferenceMappingsByPage', 'availableProjects', 'observableUsers', 'commentsLocked'
+            'claimReferenceMappingsByPage', 'availableProjects', 'observableUsers', 'commentsLocked',
+            'commentsByVersion', 'stageSchedule'
         ))->with('aiAvailable', $this->ai->isAvailable())
             ->with('wordEditorRole', WordReviewController::editorRole($document, request()->user()));
     }
@@ -590,6 +689,125 @@ class DocumentController extends Controller
         }
 
         return back()->with('status', 'Document submitted into the approval workflow.');
+    }
+
+    /**
+     * MOM 24 Nov: after the Chairperson, the Brand Manager gives the final approval
+     * and closes the job - optionally uploading a new version first (expected after
+     * "Approved with changes"). It then becomes Approved for Production, ready to be
+     * submitted for distribution.
+     */
+    public function close(Request $request, Document $document)
+    {
+        $this->authorize('close', $document);
+        $request->validate([
+            'file' => ['nullable', 'file', 'max:512000'],
+            'change_notes' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $version = null;
+        if ($request->hasFile('file')) {
+            $document->assertNotOnLegalHold();
+            $version = $this->versionService->storeNewVersion(
+                document: $document,
+                file: $request->file('file'),
+                uploader: $request->user(),
+                changeNotes: $request->input('change_notes') ?: 'Final version after the Chairperson sign-off',
+            );
+            $this->audit->record(action: 'VERSION_CREATED', document: $document, version: $version, actor: $request->user());
+        }
+
+        $this->engine->close($document, $request->user(), $version);
+
+        return back()->with('status', 'Final approval given and the job is closed. Submit it for distribution when ready.');
+    }
+
+    /**
+     * MOM 24 Nov: the Brand Manager (or an admin) moves the due date/time of any
+     * stage - the one in progress or one not reached yet. Every change notifies the
+     * people on that stage.
+     */
+    public function updateStageDue(Request $request, Document $document, WorkflowStage $stage)
+    {
+        $this->authorize('manageTasks', $document);
+        abort_unless($stage->workflow_template_id === $document->workflow_template_id, 404);
+
+        $validated = $request->validate(['due_at' => ['required', 'date', 'after:now']]);
+        $dueAt = \Illuminate\Support\Carbon::parse($validated['due_at']);
+        $schedule = app(\App\Services\Workflow\StageSchedule::class);
+        $row = $schedule->for($document)->first(fn ($r) => $r['stage']->id === $stage->id);
+
+        abort_unless($row && in_array($row['state'], ['open', 'upcoming'], true), 422, 'That stage is finished or skipped on this job.');
+
+        $old = $row['due_at'];
+        $document->stageSettings()->updateOrCreate(['workflow_stage_id' => $stage->id], ['due_at' => $dueAt]);
+
+        $instance = $document->activeWorkflowInstance;
+        if ($row['state'] === 'open' && $instance) {
+            $instance->pendingAssignees()->where('workflow_stage_id', $stage->id)->update([
+                'due_at' => $dueAt,
+                'due_soon_notified_at' => null,
+                'overdue_notified_at' => null,
+            ]);
+        }
+
+        $this->audit->record(
+            action: 'DUE_DATE_CHANGED',
+            document: $document,
+            instance: $instance,
+            stage: $stage,
+            actor: $request->user(),
+            description: "Due date for \"{$stage->name}\" moved from " . ($old?->format('d M Y H:i') ?? '—') . ' to ' . $dueAt->format('d M Y H:i') . ' IST.',
+        );
+
+        $schedule->refreshDueDate($document->fresh());
+
+        $recipients = User::whereIn('id', collect($row['assignee_ids'])->push($document->owner_id))
+            ->where('is_active', true)
+            ->where('id', '!=', $request->user()->id)
+            ->get();
+        foreach ($recipients as $recipient) {
+            $recipient->notify(new DocumentActionNotification(
+                document: $document,
+                event: 'due_date_changed',
+                stage: $stage,
+                actor: $request->user(),
+                comments: "\"{$stage->name}\" is now due " . $dueAt->format('d M Y, H:i') . ' IST.',
+            ));
+        }
+
+        return back()->with('status', "Due date for \"{$stage->name}\" updated - the stakeholders have been notified.");
+    }
+
+    /**
+     * Every comment on the job grouped by the version it was made on, newest version
+     * first: general comments and PDF pins (published, or the viewer's own drafts),
+     * plus the comments embedded in each Word (.docx) version.
+     *
+     * @return \Illuminate\Support\Collection<int, array{version: \App\Models\DocumentVersion|null, comments: \Illuminate\Support\Collection, word_comments: array}>
+     */
+    protected function commentsByVersion(Document $document)
+    {
+        $comments = \App\Models\DocumentComment::where('document_id', $document->id)
+            ->whereNull('parent_id')
+            ->with(['author', 'replies.author'])
+            ->oldest()
+            ->get()
+            ->groupBy(fn ($c) => $c->document_version_id ?? 0);
+
+        $extractor = app(\App\Services\WordCommentExtractor::class);
+
+        $groups = $document->versions->map(fn ($v) => [
+            'version' => $v,
+            'comments' => $comments->get($v->id, collect()),
+            'word_comments' => $v->extension() === 'docx' ? $extractor->forVersion($v) : [],
+        ]);
+
+        if ($comments->has(0)) {
+            $groups->push(['version' => null, 'comments' => $comments->get(0), 'word_comments' => []]);
+        }
+
+        return $groups->filter(fn ($g) => $g['comments']->isNotEmpty() || ! empty($g['word_comments']))->values();
     }
 
     public function uploadNewVersion(Request $request, Document $document)
@@ -1215,6 +1433,54 @@ class DocumentController extends Controller
      *
      * @param  \Illuminate\Support\Collection<int, int>  $userIds
      */
+    /**
+     * The people a new job's workflow will reach - the picks, the edited flow, or
+     * (nothing picked) every stage's own pool - must cover the team's required
+     * stakeholder groups. Only for workflows the Brand Manager selects people on.
+     */
+    protected function assertRequiredStakeholders(string $team, int $templateId, array $picks, ?array $edit, string $errorKey): void
+    {
+        if (\App\Support\RequiredStakeholders::groups($team) === []) {
+            return;
+        }
+
+        $template = WorkflowTemplate::with('stages.approvers.role', 'stages.approvers.user')->find($templateId);
+        if (! $template?->owner_can_customize_workflow) {
+            return;
+        }
+
+        if ($edit) {
+            $stagesByCode = $template->stages->keyBy('code');
+            $ids = collect($edit['stages'])->flatMap(function ($row) use ($stagesByCode) {
+                if ($row['type'] === 'new') {
+                    $roleHolders = $row['role_ids']
+                        ? User::whereHas('roles', fn ($q) => $q->whereIn('roles.id', $row['role_ids']))->where('is_active', true)->pluck('id')
+                        : collect();
+
+                    return $roleHolders->merge($row['user_ids']);
+                }
+
+                return $row['approvers_dirty'] ? $row['user_ids'] : ($stagesByCode->get($row['code'])?->candidateUserIds() ?? collect());
+            });
+        } elseif ($picks) {
+            $ids = collect($picks)->flatten();
+        } else {
+            $ids = $template->stages->flatMap->candidateUserIds();
+        }
+
+        // Nobody reviews their own job, and Brand Managers never get decision tasks.
+        $ids = User::with('roles')->whereIn('id', $ids->unique()->all())->where('is_active', true)->get()
+            ->reject(fn (User $u) => $u->id === auth()->id() || $u->isBrandManagerOnly())
+            ->pluck('id');
+
+        $missing = \App\Support\RequiredStakeholders::missing($team, $ids);
+        if ($missing) {
+            $all = array_keys(\App\Support\RequiredStakeholders::groups($team));
+            throw ValidationException::withMessages([$errorKey => \App\Support\Teams::label($team) . ' jobs need at least one stakeholder from '
+                . \App\Support\RequiredStakeholders::sentence($all) . ' - please select someone for ' . \App\Support\RequiredStakeholders::sentence($missing) . '.']);
+        }
+    }
+
     protected function assertAssignable($userIds, string $label, string $errorKey): void
     {
         $users = User::with('roles')->whereIn('id', $userIds)->where('is_active', true)->get();

@@ -6,13 +6,15 @@
 <div class="divide-y divide-gray-100">
     @foreach ($tasks as $task)
         @php
-            $inTeam = $me->inTeam($task->team);
+            // Agency work goes only to the same agency's people (MOM 24 Nov).
+            $inTeam = $task->isForTeamOf($me);
             $canUpload = $task->assigned_to === $me->id || ($task->assigned_to === null && $inTeam);
             $canAssign = $inTeam || $me->can('manageTasks', $task->document);
-            if ($canAssign && ! isset($membersByTeam[$task->team])) {
-                $membersByTeam[$task->team] = \App\Models\User::teamMembers($task->team)->get(['id', 'name']);
+            $teamKey = $task->team . ':' . ($task->team === 'agency' ? $task->content_agency_id : '');
+            if ($canAssign && ! isset($membersByTeam[$teamKey])) {
+                $membersByTeam[$teamKey] = $task->teamMembers()->get(['id', 'name']);
             }
-            $members = $canAssign ? $membersByTeam[$task->team] : collect();
+            $members = $canAssign ? $membersByTeam[$teamKey] : collect();
         @endphp
         <div class="px-4 py-3 space-y-2 {{ $task->isOverdue() ? 'bg-red-50/40' : '' }}" x-data="{ upload: false }">
             <div class="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
@@ -40,12 +42,14 @@
                     @if ($members->isNotEmpty())
                         <form method="POST" action="{{ route('work-tasks.assign', $task) }}" class="flex items-center gap-1">
                             @csrf
-                            <select name="user_id" class="text-xs border-gray-300 rounded-md py-1" onchange="this.form.submit()">
-                                <option value="">Assign to…</option>
-                                @foreach ($members as $member)
-                                    <option value="{{ $member->id }}" @selected($task->assigned_to === $member->id)>{{ $member->name }}</option>
-                                @endforeach
-                            </select>
+                            <x-search-select size="sm" class="w-48" placeholder="{{ $task->assigned_to ? 'Reassign to…' : 'Assign to…' }}">
+                                <select name="user_id" onchange="this.form.submit()">
+                                    <option value="">{{ $task->assigned_to ? 'Reassign to…' : 'Assign to…' }}</option>
+                                    @foreach ($members as $member)
+                                        <option value="{{ $member->id }}" @selected($task->assigned_to === $member->id)>{{ $member->name }}</option>
+                                    @endforeach
+                                </select>
+                            </x-search-select>
                         </form>
                     @endif
                     @if ($canUpload)

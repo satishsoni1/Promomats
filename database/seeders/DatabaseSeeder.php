@@ -54,5 +54,8 @@ class DatabaseSeeder extends Seeder
         // Himalaya UAT round 2: parallel MLR (incl. Pharma Workflow 1/2), draft
         // alignment handed back to the Brand Manager, offline Chairperson sign-off.
         $this->call(HimalayaUatRoundTwoSeeder::class);
+
+        // Medical -> R&D, Regulatory -> Regulatory Affairs (the seeders above use the old names).
+        \App\Support\StakeholderLabels::apply();
     }
 }

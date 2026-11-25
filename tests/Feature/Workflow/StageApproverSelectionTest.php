@@ -31,6 +31,8 @@ class StageApproverSelectionTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // The Pharma R&D / Legal / Regulatory Affairs rule has its own test (VodoVaultReviewTest).
+        config(['promomats.workflow.required_stakeholders' => []]);
         $this->engine = app(WorkflowEngine::class);
         $this->admin = User::factory()->create();
         Storage::fake('documents');

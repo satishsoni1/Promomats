@@ -60,6 +60,12 @@ class DocumentPolicy
             return false;
         }
 
+        // Agency users upload into their task (WorkTaskController::complete), and
+        // only while the Brand Manager has work with their agency on this job.
+        if ($user->isAgencyUser()) {
+            return $document->workTasks()->open()->where('team', 'agency')->forAgencyOf($user)->exists();
+        }
+
         return $user->id === $document->owner_id
             || $user->can('access-admin')
             || $user->isAgency()
@@ -81,6 +87,16 @@ class DocumentPolicy
     public function submitForReview(User $user, Document $document): bool
     {
         return $user->id === $document->owner_id || $user->can('access-admin');
+    }
+
+    /**
+     * The final approval and closure after the Chairperson (MOM 24 Nov: "closure by
+     * Brand Manager only") - the Brand Manager who owns the job, or an admin.
+     */
+    public function close(User $user, Document $document): bool
+    {
+        return $document->status === 'pending_closure'
+            && ($user->id === $document->owner_id || $user->can('access-admin'));
     }
 
     /**

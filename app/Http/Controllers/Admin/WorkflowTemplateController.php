@@ -18,6 +18,7 @@ class WorkflowTemplateController extends Controller
 
         $templates = WorkflowTemplate::shared()
             ->when($scope, fn ($q) => $q->where('department', $scope))
+            ->when($request->filled('team'), fn ($q) => $q->where('team', $request->team))
             ->withCount('stages')
             ->latest()
             ->get();
@@ -47,7 +48,9 @@ class WorkflowTemplateController extends Controller
             'target_audiences' => ['nullable', 'array'],
             'target_audiences.*' => ['string', 'in:' . implode(',', array_keys(\App\Support\TargetAudience::LABELS))],
             'owner_can_customize_workflow' => ['sometimes', 'boolean'],
+            'team' => ['nullable', 'in:' . implode(',', \App\Support\Teams::keys())],
         ]);
+        $validated['team'] = $validated['team'] ?? \App\Support\Teams::DEFAULT;
 
         $template = WorkflowTemplate::create($validated + [
             'department' => $scope,
@@ -80,9 +83,11 @@ class WorkflowTemplateController extends Controller
             'owner_can_customize_workflow' => ['sometimes', 'boolean'],
             'awc_resume' => ['sometimes', 'in:next_stage,same_stage'],
             'completion_status' => ['sometimes', 'in:approved_for_distribution,approved_for_production'],
+            'team' => ['sometimes', 'in:' . implode(',', \App\Support\Teams::keys())],
         ]);
 
         $workflow->update([
+            'team' => $validated['team'] ?? $workflow->team ?? 'pharma',
             'owner_can_customize_workflow' => (bool) ($validated['owner_can_customize_workflow'] ?? false),
             'awc_resume' => $validated['awc_resume'] ?? $workflow->awc_resume ?? 'next_stage',
             'completion_status' => $validated['completion_status'] ?? $workflow->completion_status ?? 'approved_for_distribution',

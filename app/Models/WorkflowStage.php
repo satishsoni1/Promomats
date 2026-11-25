@@ -51,6 +51,16 @@ class WorkflowStage extends Model
         return $this->stage_type === 'offline';
     }
 
+    /**
+     * The Chairperson sign-off - the last review before the Brand Manager's final
+     * approval and closure.
+     */
+    public function isChairperson(): bool
+    {
+        return $this->isOffline()
+            || in_array($this->code, config('promomats.workflow.chairperson_stage_codes', ['CHAIRPERSON']), true);
+    }
+
     public function transitionFor(string $decision): ?WorkflowTransition
     {
         return $this->transitions()->where('decision', $decision)->first();

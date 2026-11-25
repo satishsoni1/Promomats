@@ -29,6 +29,7 @@ class WorkTaskController extends Controller
             'resubmit_on_upload' => ['nullable', 'boolean'],
             'assign_to' => ['nullable', 'integer', 'exists:users,id'],
             'team' => ['nullable', 'in:design,agency'],
+            'content_agency_id' => ['nullable', 'integer', 'exists:content_agencies,id'],
         ]);
         $team = $validated['team'] ?? 'design';
 
@@ -40,6 +41,7 @@ class WorkTaskController extends Controller
             resubmitOnUpload: (bool) ($validated['resubmit_on_upload'] ?? false),
             assignTo: $validated['assign_to'] ?? null,
             team: $team,
+            agencyId: $validated['content_agency_id'] ?? null,
         );
 
         return back()->with('status', 'Sent to the ' . DocumentWorkTask::TEAM_LABELS[$team] . '.');
@@ -54,6 +56,8 @@ class WorkTaskController extends Controller
         $validated = $request->validate([
             'team' => ['required', 'in:design,agency'],
             'instructions' => ['nullable', 'string', 'max:5000'],
+            'content_agency_id' => ['nullable', 'integer', 'exists:content_agencies,id'],
+            'assign_to' => ['nullable', 'integer', 'exists:users,id'],
         ]);
 
         $this->tasks->requestArtwork(
@@ -62,6 +66,8 @@ class WorkTaskController extends Controller
             instructions: $validated['instructions'] ?? null,
             dueAt: $document->due_date ? $document->due_date->copy()->endOfDay() : null,
             team: $validated['team'],
+            agencyId: $validated['content_agency_id'] ?? null,
+            assignTo: $validated['assign_to'] ?? null,
         );
 
         return back()->with('status', 'Brief sent to the ' . DocumentWorkTask::TEAM_LABELS[$validated['team']] . '.');
@@ -70,17 +76,21 @@ class WorkTaskController extends Controller
     /** A team member takes the task themselves. */
     public function take(Request $request, DocumentWorkTask $task)
     {
-        abort_unless($request->user()->inTeam($task->team), 403);
+        abort_unless($task->isForTeamOf($request->user()), 403);
         $this->tasks->assign($task, $request->user(), $request->user());
 
         return back()->with('status', 'You have taken this task.');
     }
 
-    /** Assign to a specific person: any member of the task's team, the Brand Manager, or an admin. */
+    /**
+     * Assign to a specific person: any member of the task's team, the Brand Manager,
+     * or an admin. Agency users can hand work only to colleagues in their own agency
+     * (WorkTaskService::assign() enforces who can receive it).
+     */
     public function assign(Request $request, DocumentWorkTask $task)
     {
         $user = $request->user();
-        abort_unless($user->inTeam($task->team) || $user->can('manageTasks', $task->document), 403);
+        abort_unless($task->isForTeamOf($user) || $user->can('manageTasks', $task->document), 403);
 
         $validated = $request->validate(['user_id' => ['required', 'integer', 'exists:users,id']]);
         $designer = User::with('roles')->findOrFail($validated['user_id']);
@@ -94,7 +104,7 @@ class WorkTaskController extends Controller
     {
         $user = $request->user();
         abort_unless(
-            $task->assigned_to === $user->id || ($task->assigned_to === null && $user->inTeam($task->team)) || $user->can('manageTasks', $task->document),
+            $task->assigned_to === $user->id || ($task->assigned_to === null && $task->isForTeamOf($user)) || $user->can('manageTasks', $task->document),
             403
         );
 
@@ -104,6 +114,12 @@ class WorkTaskController extends Controller
         ]);
 
         $version = $this->tasks->complete($task, $request->file('file'), $user, $validated['notes'] ?? null);
+
+        // Once the work is handed back, the job leaves the agency's view.
+        if ($user->isAgencyUser()) {
+            return redirect()->route('agency.index')
+                ->with('status', "Uploaded as v{$version->version_no} and sent to the Brand Manager.");
+        }
 
         return redirect()->route('documents.show', $task->document_id)
             ->with('status', "Uploaded as v{$version->version_no}. The Brand Manager has been notified to confirm it.");

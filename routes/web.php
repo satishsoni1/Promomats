@@ -8,6 +8,10 @@ use App\Http\Controllers\Admin\AiSettingController;
 use App\Http\Controllers\Admin\ArchivingSettingController;
 use App\Http\Controllers\Admin\AuditLogController;
 use App\Http\Controllers\Admin\BrandController;
+use App\Http\Controllers\Admin\ContentAgencyController;
+use App\Http\Controllers\Admin\CountryController;
+use App\Http\Controllers\Admin\SkuController;
+use App\Http\Controllers\AgencyWorkspaceController;
 use App\Http\Controllers\Admin\ClaimCandidateController;
 use App\Http\Controllers\Admin\DocumentTypeController;
 use App\Http\Controllers\Admin\WorkflowRuleController;
@@ -101,6 +105,13 @@ Route::middleware(['auth'])->group(function () {
     // Task owner: reassign a pending task / move its due date.
     Route::post('/documents/{document}/tasks/{task}/reassign', [DocumentTaskController::class, 'reassign'])->name('documents.tasks.reassign');
     Route::post('/documents/{document}/tasks/{task}/due', [DocumentTaskController::class, 'updateDue'])->name('documents.tasks.due');
+    // Any stage's due date/time, including stages not reached yet (MOM 24 Nov).
+    Route::post('/documents/{document}/stages/{stage}/due', [DocumentController::class, 'updateStageDue'])->name('documents.stages.due');
+    // Brand Manager's final approval & closure after the Chairperson.
+    Route::post('/documents/{document}/close', [DocumentController::class, 'close'])->name('documents.close');
+
+    // Content Agency login: the agency's own jobs.
+    Route::get('/agency', [AgencyWorkspaceController::class, 'index'])->name('agency.index');
 
     // Design Team umbrella work (placeholder artwork, rework after Approved with changes).
     Route::post('/documents/{document}/work-tasks', [WorkTaskController::class, 'store'])->name('documents.work-tasks.store');
@@ -268,6 +279,29 @@ Route::middleware(['auth'])->group(function () {
             Route::get('/brands', [BrandController::class, 'index'])->name('brands.index');
             Route::post('/brands', [BrandController::class, 'store'])->name('brands.store');
             Route::post('/brands/{brand}/toggle-status', [BrandController::class, 'toggleStatus'])->name('brands.toggle-status');
+            Route::post('/brands/{brand}/division', [BrandController::class, 'updateDivision'])->name('brands.division');
+
+            // MOM 24 Nov master data: SKUs (per brand), countries, content agencies.
+            Route::get('/skus', [SkuController::class, 'index'])->name('skus.index');
+            Route::post('/skus', [SkuController::class, 'store'])->name('skus.store');
+            Route::post('/skus/bulk', [SkuController::class, 'bulkStore'])->name('skus.bulk');
+            Route::put('/skus/{sku}', [SkuController::class, 'update'])->name('skus.update');
+            Route::post('/skus/{sku}/toggle-status', [SkuController::class, 'toggleStatus'])->name('skus.toggle-status');
+
+            Route::get('/countries', [CountryController::class, 'index'])->name('countries.index');
+            Route::post('/countries', [CountryController::class, 'store'])->name('countries.store');
+            Route::post('/countries/bulk', [CountryController::class, 'bulkStore'])->name('countries.bulk');
+            Route::put('/countries/{country}', [CountryController::class, 'update'])->name('countries.update');
+            Route::post('/countries/{country}/toggle-status', [CountryController::class, 'toggleStatus'])->name('countries.toggle-status');
+
+            Route::get('/content-agencies', [ContentAgencyController::class, 'index'])->name('content-agencies.index');
+            Route::post('/content-agencies', [ContentAgencyController::class, 'store'])->name('content-agencies.store');
+            Route::get('/content-agencies/{contentAgency}', [ContentAgencyController::class, 'show'])->name('content-agencies.show');
+            Route::put('/content-agencies/{contentAgency}', [ContentAgencyController::class, 'update'])->name('content-agencies.update');
+            Route::post('/content-agencies/{contentAgency}/toggle-status', [ContentAgencyController::class, 'toggleStatus'])->name('content-agencies.toggle-status');
+            Route::post('/content-agencies/{contentAgency}/users', [ContentAgencyController::class, 'storeUser'])->name('content-agencies.users.store');
+            Route::post('/content-agencies/{contentAgency}/users/attach', [ContentAgencyController::class, 'attachUser'])->name('content-agencies.users.attach');
+            Route::delete('/content-agencies/{contentAgency}/users/{user}', [ContentAgencyController::class, 'detachUser'])->name('content-agencies.users.detach');
 
             Route::get('/document-types', [DocumentTypeController::class, 'index'])->name('document-types.index');
             Route::post('/document-types', [DocumentTypeController::class, 'store'])->name('document-types.store');

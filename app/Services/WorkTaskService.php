@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ContentAgency;
 use App\Models\Document;
 use App\Models\DocumentVersion;
 use App\Models\DocumentWorkTask;
@@ -30,16 +31,25 @@ class WorkTaskService
         protected AuditLogger $audit,
     ) {}
 
-    public function requestArtwork(Document $document, User $requestedBy, ?string $instructions = null, ?Carbon $dueAt = null, string $team = 'design'): DocumentWorkTask
+    public function requestArtwork(Document $document, User $requestedBy, ?string $instructions = null, ?Carbon $dueAt = null, string $team = 'design', ?int $agencyId = null, ?int $assignTo = null): DocumentWorkTask
     {
-        return $this->create($document, 'artwork', $requestedBy, $instructions, $dueAt, resubmitOnUpload: false, team: $team);
+        // Created and handed to the person together, or not at all.
+        return DB::transaction(function () use ($document, $requestedBy, $instructions, $dueAt, $team, $agencyId, $assignTo) {
+            $task = $this->create($document, 'artwork', $requestedBy, $instructions, $dueAt, resubmitOnUpload: false, team: $team, agencyId: $agencyId, assignTo: $assignTo);
+
+            if ($assignTo) {
+                $this->assign($task, User::findOrFail($assignTo), $requestedBy);
+            }
+
+            return $task;
+        });
     }
 
     /**
      * The Brand Manager sends a job back to a team for rework (waiting on a revision)
      * or, once the Content Manager has aligned the draft, for the creative.
      */
-    public function requestRework(Document $document, User $requestedBy, ?string $instructions, ?Carbon $dueAt, bool $resubmitOnUpload, ?int $assignTo = null, string $team = 'design'): DocumentWorkTask
+    public function requestRework(Document $document, User $requestedBy, ?string $instructions, ?Carbon $dueAt, bool $resubmitOnUpload, ?int $assignTo = null, string $team = 'design', ?int $agencyId = null): DocumentWorkTask
     {
         $type = match ($document->status) {
             'approved_with_changes_pending' => 'rework',
@@ -50,16 +60,18 @@ class WorkTaskService
         // Agency uploads, and the creative, always come back to the Brand Manager to confirm.
         $resubmitOnUpload = $resubmitOnUpload && $type === 'rework' && $team === 'design';
 
-        $task = $this->create($document, $type, $requestedBy, $instructions, $dueAt, $resubmitOnUpload, $team);
+        return DB::transaction(function () use ($document, $type, $requestedBy, $instructions, $dueAt, $resubmitOnUpload, $team, $agencyId, $assignTo) {
+            $task = $this->create($document, $type, $requestedBy, $instructions, $dueAt, $resubmitOnUpload, $team, $agencyId, $assignTo);
 
-        if ($assignTo) {
-            $this->assign($task, User::findOrFail($assignTo), $requestedBy);
-        }
+            if ($assignTo) {
+                $this->assign($task, User::findOrFail($assignTo), $requestedBy);
+            }
 
-        return $task;
+            return $task;
+        });
     }
 
-    protected function create(Document $document, string $type, User $requestedBy, ?string $instructions, ?Carbon $dueAt, bool $resubmitOnUpload, string $team = 'design'): DocumentWorkTask
+    protected function create(Document $document, string $type, User $requestedBy, ?string $instructions, ?Carbon $dueAt, bool $resubmitOnUpload, string $team = 'design', ?int $agencyId = null, ?int $assignTo = null): DocumentWorkTask
     {
         if (! array_key_exists($team, DocumentWorkTask::TEAM_LABELS)) {
             throw ValidationException::withMessages(['rework' => 'Unknown team.']);
@@ -69,10 +81,16 @@ class WorkTaskService
             throw ValidationException::withMessages(['rework' => 'This job already has open work with a team.']);
         }
 
+        $agencyId = $team === 'agency' ? $this->resolveAgency($agencyId, $assignTo) : null;
+
         $task = DocumentWorkTask::create([
             'document_id' => $document->id,
             'type' => $type,
             'team' => $team,
+            'content_agency_id' => $agencyId,
+            // Set explicitly: assign() right after checks it, and the DB default
+            // isn't on the in-memory model.
+            'status' => 'open',
             'requested_by' => $requestedBy->id,
             'instructions' => $instructions,
             'resubmit_on_upload' => $resubmitOnUpload,
@@ -86,9 +104,43 @@ class WorkTaskService
             description: "{$task->typeLabel()} sent to the {$task->teamLabel()}" . ($instructions ? ": {$instructions}" : '.'),
         );
 
-        $this->notify(User::teamMembers($team)->get(), $document, 'work_task_created', $requestedBy, $instructions);
+        // A task already handed to one person tells just them (assign() does that).
+        if (! $assignTo) {
+            $this->notify($task->teamMembers()->get(), $document, 'work_task_created', $requestedBy, $instructions);
+        }
 
         return $task;
+    }
+
+    /**
+     * Which content agency agency work goes to (MOM 24 Nov: the Brand Manager adds
+     * a content agency to the workflow and picks a user from it): the one chosen,
+     * else the chosen person's agency, else the only active agency. With no agency
+     * master set up yet, work goes to every agency user as before.
+     */
+    protected function resolveAgency(?int $agencyId, ?int $assignTo): ?int
+    {
+        if ($agencyId) {
+            if (! ContentAgency::active()->whereKey($agencyId)->exists()) {
+                throw ValidationException::withMessages(['content_agency_id' => 'That content agency is not active.']);
+            }
+
+            return $agencyId;
+        }
+
+        if ($assignTo && ($fromUser = User::whereKey($assignTo)->value('content_agency_id'))) {
+            return $fromUser;
+        }
+
+        $active = ContentAgency::active()->pluck('id');
+        if ($active->count() === 1) {
+            return $active->first();
+        }
+        if ($active->isEmpty()) {
+            return null;
+        }
+
+        throw ValidationException::withMessages(['content_agency_id' => 'Choose which content agency this goes to.']);
     }
 
     /**
@@ -100,7 +152,7 @@ class WorkTaskService
         if ($task->status !== 'open') {
             throw ValidationException::withMessages(['assign' => 'This task is no longer open.']);
         }
-        if (! $designer->is_active || ! $designer->loadMissing('roles')->inTeam($task->team)) {
+        if (! $designer->is_active || ! $task->isForTeamOf($designer->loadMissing('roles'))) {
             throw ValidationException::withMessages(['assign' => "{$designer->name} isn't in the {$task->teamLabel()}."]);
         }
 

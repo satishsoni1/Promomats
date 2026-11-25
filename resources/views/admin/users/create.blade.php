@@ -61,6 +61,19 @@
                         <x-input-error :messages="$errors->get('roles')" class="mt-2" />
                     </div>
 
+                    @if ($agencies->isNotEmpty())
+                        <div>
+                            <x-input-label for="content_agency_id" value="Content agency (Content Agency users only)" />
+                            <select id="content_agency_id" name="content_agency_id" class="mt-1 block w-full text-sm border-gray-300 rounded-md">
+                                <option value="">— None —</option>
+                                @foreach ($agencies as $agency)
+                                    <option value="{{ $agency->id }}" @selected(old('content_agency_id') == $agency->id)>{{ $agency->name }}</option>
+                                @endforeach
+                            </select>
+                            <p class="mt-1 text-xs text-gray-500">They will only see the jobs sent to this agency. Manage agencies under <a href="{{ route('admin.content-agencies.index') }}" class="text-brand-600 hover:underline">Content Agencies</a>.</p>
+                        </div>
+                    @endif
+
                     <p class="text-xs text-gray-500">A random temporary password will be generated and shown after creation. The user should change it on first login.</p>
 
                     <div class="flex items-center gap-4">

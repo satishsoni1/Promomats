@@ -67,7 +67,7 @@ class HimalayaWellnessUsersSeeder extends Seeder
                 ]
             );
 
-            $roleIds = Role::whereIn('name', $p['roles'])->pluck('id');
+            $roleIds = Role::whereIn('slug', array_map(fn ($n) => \Illuminate\Support\Str::slug($n), $p['roles']))->pluck('id');
             $user->roles()->syncWithoutDetaching($roleIds);
         }
 

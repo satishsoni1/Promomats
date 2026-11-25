@@ -34,6 +34,66 @@ return [
         'require_password' => (bool) env('APPROVAL_REQUIRE_PASSWORD', false),
     ],
 
+    /*
+    | Teams the workflows and jobs are divided into. Each team has its own
+    | workflows and its own upload fields - add a team's extra fields here (and in
+    | the upload form's team section) as they are agreed. 'departments' pre-selects
+    | the team on the upload form for users in those departments.
+    */
+    'teams' => [
+        'pharma' => [
+            'label' => 'Pharma',
+            'description' => 'Promotional / non-promotional material - brand, SKU, country and collateral.',
+            'departments' => [],
+            // Fields the upload form shows (and stores) for this team.
+            'fields' => ['category', 'brand', 'sku', 'country', 'channel', 'document_type', 'target_audience'],
+        ],
+        'publication' => [
+            'label' => 'Scientific Publications',
+            'description' => 'Publications and proofs - the Scientific Publications team\'s own workflows.',
+            'departments' => ['Scientific Publications'],
+            // Publication-specific fields will be added here once agreed.
+            'fields' => ['project'],
+        ],
+    ],
+
+    'workflow' => [
+        // A rejection at any stage after these (TM/AGM) sends the revision back
+        // through TM and every later stage again (MOM 24 Nov).
+        'rereview_from_stage_codes' => ['TM_AGM'],
+        // Stage codes treated as the Chairperson sign-off (offline stages always are).
+        // After it, the Brand Manager gives the final approval and closes the job.
+        'chairperson_stage_codes' => ['CHAIRPERSON'],
+        // Auto-selected as the Chairperson stage's approver (MOM 24 Nov: "Jalba").
+        'chairperson_approver_email' => env('CHAIRPERSON_APPROVER_EMAIL', 'jalba.rc@himalayawellness.com'),
+
+        // Stakeholder groups a job's workflow must reach before it can be saved, per
+        // team: at least one person from each group (counted by their roles).
+        'required_stakeholders' => [
+            'pharma' => [
+                'R&D' => ['rd', 'medical'],
+                'Legal' => ['legal', 'legal-level-1', 'legal-level-2'],
+                'Regulatory Affairs' => ['regulatory', 'regulatory-level-1', 'regulatory-level-2'],
+            ],
+        ],
+    ],
+
+    /*
+    | Brand divisions. Each brand belongs to one; the Chairperson stage is
+    | auto-assigned to that division's Content Manager. Brands with no division use
+    | workflow.chairperson_approver_email.
+    */
+    'divisions' => [
+        'zeal' => [
+            'label' => 'Zeal',
+            'chairperson_email' => env('ZEAL_CHAIRPERSON_EMAIL', 'rathna.b@himalayawellness.com'),
+        ],
+        'zandra' => [
+            'label' => 'Zandra',
+            'chairperson_email' => env('ZANDRA_CHAIRPERSON_EMAIL', 'jalba.rc@himalayawellness.com'),
+        ],
+    ],
+
     'due_dates' => [
         // Default time each stage gets, unless the task owner changes it at upload.
         'default_stage_hours' => (int) env('DEFAULT_STAGE_DUE_HOURS', 48),

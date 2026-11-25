@@ -13,6 +13,8 @@
                         <tr>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Name</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Code</th>
+                            <th class="px-4 py-3 text-left font-medium text-gray-500" title="Decides the Chairperson approver">Division</th>
+                            <th class="px-4 py-3 text-left font-medium text-gray-500">SKUs</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Documents</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                             <th class="px-4 py-3"></th>
@@ -23,6 +25,18 @@
                             <tr>
                                 <td class="px-4 py-3 font-medium text-gray-900">{{ $brand->name }}</td>
                                 <td class="px-4 py-3 text-gray-500 font-mono text-xs">{{ $brand->code }}</td>
+                                <td class="px-4 py-3">
+                                    <form method="POST" action="{{ route('admin.brands.division', $brand) }}">
+                                        @csrf
+                                        <select name="division" onchange="this.form.submit()" class="text-xs border-gray-300 rounded-md py-1 pr-7">
+                                            <option value="">— None —</option>
+                                            @foreach (\App\Models\Brand::divisions() as $key => $label)
+                                                <option value="{{ $key }}" @selected($brand->division === $key)>{{ $label }}</option>
+                                            @endforeach
+                                        </select>
+                                    </form>
+                                </td>
+                                <td class="px-4 py-3"><a href="{{ route('admin.skus.index', ['brand' => $brand->id]) }}" class="text-brand-600 hover:underline">{{ $brand->skus_count }}</a></td>
                                 <td class="px-4 py-3 text-gray-600">{{ $brand->documents_count }}</td>
                                 <td class="px-4 py-3">
                                     <span @class(['text-xs px-2 py-0.5 rounded-full font-medium', 'bg-green-100 text-green-700' => $brand->status === 'active', 'bg-gray-100 text-gray-500' => $brand->status !== 'active'])>{{ ucfirst($brand->status) }}</span>
@@ -35,7 +49,7 @@
                                 </td>
                             </tr>
                         @empty
-                            <tr><td colspan="5" class="px-4 py-6 text-center text-gray-500">No brands yet.</td></tr>
+                            <tr><td colspan="7" class="px-4 py-6 text-center text-gray-500">No brands yet.</td></tr>
                         @endforelse
                     </tbody>
                 </table>
@@ -54,7 +68,16 @@
                         <x-text-input id="code" name="code" class="mt-1 block w-full" placeholder="auto-generated" />
                     </div>
                     <x-primary-button>Add</x-primary-button>
-                    <div class="md:col-span-4">
+                    <div class="md:col-span-2">
+                        <x-input-label for="division" value="Division (decides the Chairperson approver)" />
+                        <select id="division" name="division" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm text-sm">
+                            <option value="">— None —</option>
+                            @foreach (\App\Models\Brand::divisions() as $key => $label)
+                                <option value="{{ $key }}">{{ $label }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div class="md:col-span-2">
                         <x-input-label for="description" value="Description (optional)" />
                         <x-text-input id="description" name="description" class="mt-1 block w-full" />
                     </div>

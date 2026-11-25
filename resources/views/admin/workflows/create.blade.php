@@ -42,6 +42,16 @@
                     </div>
 
                     <div>
+                        <x-input-label for="team" value="Team" />
+                        <select id="team" name="team" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">
+                            @foreach (\App\Support\Teams::labels() as $teamKey => $teamLabel)
+                                <option value="{{ $teamKey }}" @selected(old('team', 'pharma') === $teamKey)>{{ $teamLabel }}</option>
+                            @endforeach
+                        </select>
+                        <p class="mt-1 text-xs text-gray-500">Only this team's jobs can use this workflow, and its upload form shows that team's fields.</p>
+                    </div>
+
+                    <div>
                         <x-input-label for="description" value="Description" />
                         <textarea id="description" name="description" rows="3" class="mt-1 block w-full border-gray-300 focus:border-brand-500 focus:ring-brand-500 rounded-md shadow-sm">{{ old('description') }}</textarea>
                     </div>

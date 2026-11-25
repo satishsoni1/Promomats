@@ -24,11 +24,27 @@ class MobileCatalogController extends Controller
         $data = app(DocumentController::class)->create()->getData();
 
         return response()->json([
-            'brands' => $data['brands']->map->only('id', 'name')->values(),
+            'brands' => $data['brands']->map->only('id', 'name', 'division')->values(),
+            // Chairperson stage default per brand (by division: Zeal -> Rathna, Zandra -> Jalba).
+            'chairperson_by_brand' => (object) $data['chairpersonByBrand'],
+            // MOM 24 Nov master data: Category / SKU (by brand) / Country dropdowns.
+            'categories' => $data['categories'],
+            'skus' => $data['skus']->map->only('id', 'brand_id', 'name', 'code')->values(),
+            'countries' => $data['countries']->map->only('id', 'name', 'code')->values(),
+            'content_agencies' => $data['agencies']->map(fn ($a) => [
+                'id' => $a->id,
+                'name' => $a->name,
+                'users' => $a->users->map->only('id', 'name')->values(),
+            ])->values(),
             'document_types' => $data['documentTypes']->map(fn ($t) => ['id' => $t->id, 'name' => $t->name, 'channel' => $t->channel])->values(),
             'projects' => $data['projects']->map->only('id', 'name')->values(),
             'target_audiences' => collect(TargetAudience::LABELS)->map(fn ($label, $key) => ['key' => $key, 'label' => $label])->values(),
-            'templates' => $data['templates']->map(fn ($t) => ['id' => $t->id, 'name' => $t->name, 'customisable' => (bool) $t->owner_can_customize_workflow])->values(),
+            'templates' => $data['templates']->map(fn ($t) => ['id' => $t->id, 'name' => $t->name, 'team' => $t->team ?? 'pharma', 'customisable' => (bool) $t->owner_can_customize_workflow])->values(),
+            // Pharma / Scientific Publications - each with its own workflows and fields.
+            'teams' => collect($data['teams'])->map(fn ($t, $key) => ['key' => $key, 'label' => $t['label'], 'fields' => $t['fields'] ?? []])->values(),
+            'default_team' => $data['defaultTeam'],
+            // Pharma: at least one R&D, Legal and Regulatory Affairs stakeholder must be selected.
+            'required_stakeholders' => $data['requiredStakeholders'],
             'rules' => $data['workflowRules']->map->only('workflow_template_id', 'brand_id', 'document_type_id', 'priority')->values(),
             // Per template: the stages and the people the Brand Manager can pick (never themselves).
             'stages' => $data['templateApproverOptions'],

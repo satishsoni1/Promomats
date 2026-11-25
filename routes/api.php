@@ -45,6 +45,8 @@ Route::prefix('v1')->group(function () {
 
             Route::post('/documents/{document}/tasks/{task}/reassign', [MobileWorkflowController::class, 'reassign']);
             Route::post('/documents/{document}/tasks/{task}/due', [MobileWorkflowController::class, 'updateDue']);
+            Route::post('/documents/{document}/stages/{stage}/due', [MobileWorkflowController::class, 'updateStageDue']);
+            Route::post('/documents/{document}/close', [MobileWorkflowController::class, 'close']);
 
             Route::post('/documents/{document}/work-tasks', [MobileWorkflowController::class, 'requestWork']);
             Route::post('/documents/{document}/placeholder-assign', [MobileWorkflowController::class, 'assignPlaceholder']);

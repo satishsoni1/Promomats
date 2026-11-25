@@ -6,6 +6,7 @@ import videoAnnotationPlayer from './video-annotation';
 import pdfContentEditor from './pdf-editor';
 import wordReviewEditor from './word-editor';
 import versionPreview from './version-preview';
+import searchSelect from './search-select';
 
 window.Alpine = Alpine;
 
@@ -25,5 +26,6 @@ Alpine.data('videoAnnotationPlayer', videoAnnotationPlayer);
 Alpine.data('pdfContentEditor', pdfContentEditor);
 Alpine.data('wordReviewEditor', wordReviewEditor);
 Alpine.data('versionPreview', versionPreview);
+Alpine.data('searchSelect', searchSelect);
 
 Alpine.start();

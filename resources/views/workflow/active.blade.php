@@ -86,14 +86,16 @@
                                         <a href="{{ route('documents.show', $doc) }}" class="font-medium text-gray-900 hover:text-brand-700">{{ $doc->title }}</a>
                                         <div class="text-xs text-gray-500">
                                             <span class="font-mono">{{ $doc->reference_no }}</span>
-                                            @if ($doc->status === 'draft_aligned')
+                                            @if ($doc->status === 'pending_closure')
+                                                · Chairperson {{ $lastAction?->decision === 'approved_with_changes' ? 'approved with changes' : 'approved' }}{{ $lastAction ? ', ' . $lastAction->acted_at?->diffForHumans() : '' }} — give the final approval and close
+                                            @elseif ($doc->status === 'draft_aligned')
                                                 · Draft aligned{{ $lastAction ? ' by ' . $lastAction->actor?->name . ', ' . $lastAction->acted_at?->diffForHumans() : '' }} — assign the creative, then start the review
                                             @elseif ($lastAction)
                                                 · {{ $lastAction->decisionLabel() }} by {{ $lastAction->actor?->name }} at {{ $lastAction->stage?->name }}, {{ $lastAction->acted_at?->diffForHumans() }}
                                             @endif
                                         </div>
                                     </div>
-                                    <a href="{{ route('documents.show', $doc) }}#revise" class="inline-flex justify-center px-3 py-1.5 bg-amber-600 rounded-md text-xs font-semibold text-white hover:bg-amber-700">{{ $doc->status === 'draft_aligned' ? 'Assign creative / start review' : 'Upload revision / assign' }}</a>
+                                    <a href="{{ route('documents.show', $doc) }}#revise" class="inline-flex justify-center px-3 py-1.5 bg-amber-600 rounded-md text-xs font-semibold text-white hover:bg-amber-700">{{ $doc->status === 'pending_closure' ? 'Approve & close' : ($doc->status === 'draft_aligned' ? 'Assign creative / start review' : 'Upload revision / assign') }}</a>
                                 </div>
                             @endforeach
                         </div>

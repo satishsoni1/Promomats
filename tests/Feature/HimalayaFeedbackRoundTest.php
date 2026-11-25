@@ -37,6 +37,8 @@ class HimalayaFeedbackRoundTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // The Pharma R&D / Legal / Regulatory Affairs rule has its own test (VodoVaultReviewTest).
+        config(['promomats.workflow.required_stakeholders' => []]);
         Storage::fake('documents');
         Notification::fake();
         $this->engine = app(WorkflowEngine::class);

@@ -56,6 +56,7 @@ class ScientificPublicationsWorkflow2Seeder extends Seeder
             'name' => 'Scientific Publications - Proof Generation',
             'target_audiences' => ['hcp'],
             'owner_can_customize_workflow' => true,
+            'team' => 'publication', // the Scientific Publications team's own workflow
         ]);
 
         if ($template->stages()->exists()) {

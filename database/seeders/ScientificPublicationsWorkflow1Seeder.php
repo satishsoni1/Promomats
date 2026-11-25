@@ -83,6 +83,7 @@ class ScientificPublicationsWorkflow1Seeder extends Seeder
             'name' => 'Scientific Publications - Content Generation',
             'target_audiences' => ['hcp'],
             'owner_can_customize_workflow' => true,
+            'team' => 'publication', // the Scientific Publications team's own workflow
         ]);
 
         if ($template->stages()->exists()) {

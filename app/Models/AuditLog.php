@@ -33,7 +33,7 @@ class AuditLog extends Model
         'VERSION_CREATED' => 'New version uploaded',
         'SUBMITTED' => 'Submitted for review',
         'ASSIGNED' => 'Stage assigned',
-        'SKIPPED' => 'Stage skipped (condition not met)',
+        'SKIPPED' => 'Stage skipped',
         'SLA_BREACHED' => 'SLA breached',
         'VIEWED' => 'Viewed',
         'DOWNLOADED' => 'Downloaded',
@@ -52,6 +52,8 @@ class AuditLog extends Model
         'WORK_TASK_ASSIGNED' => 'Design work assigned',
         'WORK_TASK_CANCELLED' => 'Design work withdrawn',
         'DUE_DATE_CHANGED' => 'Due date changed',
+        'AWAITING_CLOSURE' => 'Chairperson signed off - awaiting closure',
+        'DOCUMENT_CLOSED' => 'Final approval & closure',
     ];
 
     public function user()

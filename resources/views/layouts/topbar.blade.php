@@ -14,6 +14,7 @@
         @endisset
     </div>
 
+    @unless (auth()->user()->isAgencyUser())
     <form method="GET" action="{{ route('search') }}" class="relative hidden md:block">
         <input type="text" name="q" value="{{ request('q') }}" placeholder="Search documents, claims…"
                class="w-64 text-sm border-gray-300 rounded-full pl-9 pr-3 py-1.5 focus:border-brand-500 focus:ring-brand-500">
@@ -21,6 +22,7 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
         </svg>
     </form>
+    @endunless
 
     <!-- Notification bell -->
     <x-dropdown align="right" width="w-96">
@@ -59,6 +61,7 @@
         </x-slot>
     </x-dropdown>
 
+    @unless (auth()->user()->isAgencyUser())
     <a href="{{ route('basket.show') }}" class="relative p-2 text-gray-500 hover:text-gray-700" title="Download basket">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l3-8H6.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
@@ -67,4 +70,5 @@
             <span class="absolute -top-1 -right-1 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold text-white bg-accent-500 rounded-full">{{ $basketCount }}</span>
         @endif
     </a>
+    @endunless
 </header>

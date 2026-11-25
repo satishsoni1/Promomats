@@ -7,7 +7,13 @@
         <div class="max-w-5xl mx-auto sm:px-6 lg:px-8">
             @include('admin._nav')
 
-            <div class="flex items-center justify-end mb-4">
+            <div class="flex items-center justify-between gap-3 mb-4">
+                <div class="flex gap-1 text-sm">
+                    <a href="{{ route('admin.workflows.index') }}" class="px-3 py-1.5 rounded-md {{ ! request('team') ? 'bg-brand-50 text-brand-700 font-medium' : 'text-gray-500 hover:bg-gray-50' }}">All</a>
+                    @foreach (\App\Support\Teams::labels() as $teamKey => $teamLabel)
+                        <a href="{{ route('admin.workflows.index', ['team' => $teamKey]) }}" class="px-3 py-1.5 rounded-md {{ request('team') === $teamKey ? 'bg-brand-50 text-brand-700 font-medium' : 'text-gray-500 hover:bg-gray-50' }}">{{ $teamLabel }}</a>
+                    @endforeach
+                </div>
                 <a href="{{ route('admin.workflows.create') }}" class="inline-flex items-center px-4 py-2 bg-brand-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-brand-700">
                     + New Workflow
                 </a>
@@ -19,6 +25,7 @@
                         <tr>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Name</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Code</th>
+                            <th class="px-4 py-3 text-left font-medium text-gray-500">Team</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Applies To</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Department</th>
                             <th class="px-4 py-3 text-left font-medium text-gray-500">Stages</th>
@@ -31,6 +38,7 @@
                             <tr>
                                 <td class="px-4 py-3 font-medium text-gray-900">{{ $template->name }}</td>
                                 <td class="px-4 py-3 text-gray-600 font-mono text-xs">{{ $template->code }}</td>
+                                <td class="px-4 py-3"><span class="text-xs px-2 py-0.5 rounded-full {{ ($template->team ?? 'pharma') === 'publication' ? 'bg-indigo-50 text-indigo-700' : 'bg-teal-50 text-teal-700' }}">{{ \App\Support\Teams::label($template->team ?? 'pharma') }}</span></td>
                                 <td class="px-4 py-3 text-gray-600">{{ $template->applies_to_category ?? '—' }}</td>
                                 <td class="px-4 py-3 text-gray-600">{{ $template->department ?? '— shared —' }}</td>
                                 <td class="px-4 py-3 text-gray-600">{{ $template->stages_count }}</td>

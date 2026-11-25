@@ -24,7 +24,7 @@ use Illuminate\Http\Request;
  */
 class ActiveWorkflowController extends Controller
 {
-    public const ACTIVE_STATUSES = ['draft', 'in_review', 'approved_with_changes_pending', 'draft_aligned'];
+    public const ACTIVE_STATUSES = ['draft', 'in_review', 'approved_with_changes_pending', 'draft_aligned', 'pending_closure'];
 
     public function index(Request $request)
     {
@@ -52,7 +52,9 @@ class ActiveWorkflowController extends Controller
         $myJobs = $this->activeJobsFor($user->id);
 
         $queue = fn (string $team) => $user->inTeam($team) || $user->canAdminister()
-            ? DocumentWorkTask::open()->where('team', $team)->with(['document.owner', 'assignee', 'requester'])->orderBy('due_at')->get()
+            ? DocumentWorkTask::open()->where('team', $team)
+                ->when($team === 'agency' && ! $user->canAdminister(), fn ($q) => $q->forAgencyOf($user))
+                ->with(['document.owner', 'assignee', 'requester', 'contentAgency'])->orderBy('due_at')->get()
             : collect();
         $designQueue = $queue('design');
         $agencyQueue = $queue('agency');
